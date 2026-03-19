@@ -145,18 +145,21 @@ pnpm release:prepare
 仓库已增加 GitHub Actions 发布流水线：
 
 - 工作流文件：`.github/workflows/release.yml`
-- 触发条件：推送到 `master`
+- 触发条件：
+  - 推送到 `master` 且提交信息包含 `[release]`
+  - 手动触发 `workflow_dispatch`
 - 执行动作：
   - `pnpm install --frozen-lockfile`
   - `pnpm typecheck`
   - `pnpm release:prepare`
   - 生成 `release-artifacts/manclaw-release-v<version>.zip`
   - 发布或更新 GitHub Release
+  - 附带上传 `install-latest-release.sh`
 
 版本 tag 规则：
 
 - tag 名称固定为 `v<package.json version>`
-- 每次推送到 `master` 都会把当前版本 tag 移动到最新提交
+- 只有提交信息包含 `[release]` 时，才会把当前版本 tag 移动到最新提交
 - 如果版本号没有变化，现有 tag 和 GitHub Release 会被更新，而不是新建一个版本号
 
 也就是说，`0.1.0` 连续多次提交时，流水线会持续重打 `v0.1.0`
@@ -172,13 +175,13 @@ npm start
 如果要自动下载 GitHub 最新 release zip、解压并安装依赖：
 
 ```bash
-python3 scripts/install-latest-release.py --repo owner/name
+python3 scripts/install-latest-release.py
 ```
 
 也可以使用 shell 版本：
 
 ```bash
-bash scripts/install-latest-release.sh --repo owner/name
+bash scripts/install-latest-release.sh
 ```
 
 也可以通过环境变量指定仓库：
@@ -189,6 +192,18 @@ MANCLAW_RELEASE_REPO=owner/name python3 scripts/install-latest-release.py
 
 ```bash
 MANCLAW_RELEASE_REPO=owner/name bash scripts/install-latest-release.sh
+```
+
+如果你是从 fork 仓库发布，请把命令里的仓库改成你自己的，或设置：
+
+```bash
+MANCLAW_RELEASE_REPO=your-name/your-fork
+```
+
+如果要直接一行安装最新 release：
+
+```bash
+curl -fsSL https://github.com/icocoding/manclaw/releases/latest/download/install-latest-release.sh | bash
 ```
 
 ## MVP 说明

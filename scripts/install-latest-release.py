@@ -11,6 +11,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+DEFAULT_REPO = "icocoding/manclaw"
+
 
 def detect_repo_slug() -> str | None:
     env_value = os.environ.get("MANCLAW_RELEASE_REPO", "").strip()
@@ -78,10 +80,12 @@ def main() -> int:
     parser.add_argument("--skip-install", action="store_true", help="Skip npm install after extraction")
     args = parser.parse_args()
 
-    repo_slug = args.repo or detect_repo_slug()
-    if not repo_slug:
-        print("Cannot detect GitHub repo. Use --repo owner/name or set MANCLAW_RELEASE_REPO.", file=sys.stderr)
-        return 1
+    repo_slug = args.repo or detect_repo_slug() or DEFAULT_REPO
+    using_default_repo = not args.repo and not os.environ.get("MANCLAW_RELEASE_REPO") and repo_slug == DEFAULT_REPO
+
+    if using_default_repo:
+        print(f"Using default release repo: {DEFAULT_REPO}", file=sys.stderr)
+        print("If you are installing from a fork, pass --repo owner/name or set MANCLAW_RELEASE_REPO.", file=sys.stderr)
 
     release = fetch_latest_release(repo_slug)
     asset = select_zip_asset(release)

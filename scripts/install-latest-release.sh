@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${MANCLAW_RELEASE_REPO:-}"
+DEFAULT_REPO="icocoding/manclaw"
+REPO="${MANCLAW_RELEASE_REPO:-$DEFAULT_REPO}"
 TARGET_DIR="."
 SKIP_INSTALL="0"
+USING_DEFAULT_REPO="1"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
       REPO="${2:-}"
+      USING_DEFAULT_REPO="0"
       shift 2
       ;;
     --target-dir)
@@ -25,6 +28,7 @@ Usage: install-latest-release.sh [--repo owner/name] [--target-dir DIR] [--skip-
 
 Download the latest ManClaw release zip from GitHub releases, extract it,
 and optionally run `npm install --omit=dev`.
+Default repo: icocoding/manclaw
 EOF
       exit 0
       ;;
@@ -71,10 +75,19 @@ detect_repo_slug() {
   printf '%s\n' "$remote"
 }
 
-REPO="$(detect_repo_slug || true)"
-if [[ -z "$REPO" ]]; then
-  echo "Cannot detect GitHub repo. Use --repo owner/name or set MANCLAW_RELEASE_REPO." >&2
-  exit 1
+REPO="$(detect_repo_slug || printf '%s\n' "$DEFAULT_REPO")"
+
+if [[ -n "${MANCLAW_RELEASE_REPO:-}" ]]; then
+  USING_DEFAULT_REPO="0"
+fi
+
+if [[ "$REPO" != "$DEFAULT_REPO" ]]; then
+  USING_DEFAULT_REPO="0"
+fi
+
+if [[ "$USING_DEFAULT_REPO" == "1" ]]; then
+  echo "Using default release repo: ${DEFAULT_REPO}" >&2
+  echo "If you are installing from a fork, pass --repo owner/name or set MANCLAW_RELEASE_REPO." >&2
 fi
 
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"

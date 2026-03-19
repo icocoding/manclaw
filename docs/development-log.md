@@ -110,6 +110,9 @@
 - 调整 README 展示：在首页顶部加入 `ManClaw` logo，并将主标题统一为 `ManClaw`
 - 为当前仓库配置本地 Git 代理：按环境变量写入 `.git/config` 的 `http.proxy` / `https.proxy`，便于后续通过代理执行 `fetch` / `push`
 - 修复 GitHub Actions 缺少锁文件的问题：取消 `.gitignore` 对 `pnpm-lock.yaml` 的忽略，改为将根锁文件纳入版本控制，便于 CI 正常执行 `pnpm install --frozen-lockfile`
+- 调整发布流水线触发规则：只有提交信息包含 `[release]` 时才会继续打包、重打版本 tag 并更新 GitHub Release；同时将 `scripts/install-latest-release.sh` 作为 release 附件一并发布，并在 README 中补充一行安装命令
+- 调整安装脚本默认仓库：`scripts/install-latest-release.py` 与 `scripts/install-latest-release.sh` 现在默认指向 `icocoding/manclaw`，远程一行安装不再需要额外传 `--repo`
+- 补充 fork 提示：两个安装脚本在回退到默认仓库 `icocoding/manclaw` 时，会明确提示 fork 用户改用 `--repo owner/name` 或 `MANCLAW_RELEASE_REPO`
 
 ### 当前限制
 
