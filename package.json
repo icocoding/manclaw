@@ -1,0 +1,16 @@
+{
+  "name": "manclaw",
+  "version": "0.1.0",
+  "private": true,
+  "description": "openclaw service management tool with monitoring, config, plugin, skill, shell, and Web UI support.",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:web": "pnpm --filter @manclaw/web dev",
+    "dev:server": "pnpm --filter @manclaw/server dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "preview": "npm --prefix manclaw-release install --omit=dev && npm --prefix manclaw-release start",
+    "release:prepare": "pnpm build && node scripts/prepare-release.mjs"
+  }
+}

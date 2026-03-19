@@ -1,0 +1,9 @@
+node_modules
+pnpm-lock.yaml
+dist
+coverage
+.vite
+.manclaw
+.DS_Store
+manclaw-release
+release-artifacts

@@ -1,0 +1,25 @@
+{
+  "name": "@manclaw/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:fastify --external:@fastify/* --external:pino --outfile=dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@fastify/static": "^8.2.0",
+    "@manclaw/core": "workspace:*",
+    "@manclaw/shared": "workspace:*",
+    "fastify": "^5.2.1",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "esbuild": "^0.25.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
