@@ -2,6 +2,7 @@
   "name": "manclaw",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "openclaw service management tool with monitoring, config, plugin, skill, shell, and Web UI support.",
   "packageManager": "pnpm@10.0.0",
   "scripts": {

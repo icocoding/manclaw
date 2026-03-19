@@ -1,4 +1,8 @@
-# manclaw
+<p align="center">
+  <img src="./apps/web/public/manclaw-mark.svg" alt="ManClaw logo" width="120" />
+</p>
+
+# ManClaw
 
 `manclaw` 是一款 `openclaw` 的服务管理工具，当前已落成第一阶段 MVP，覆盖：
 
@@ -30,6 +34,7 @@ docs/
 - [API 设计](./docs/api.md)
 - [版本规划](./docs/roadmap.md)
 - [开发记录](./docs/development-log.md)
+- [开源协议](./LICENSE)
 
 当前已在 [版本规划](./docs/roadmap.md) 中补充后续版本规划，重点包括：
 
@@ -79,6 +84,10 @@ VITE_API_PROXY_TARGET=http://127.0.0.1:18300
 
 - Web UI: `http://localhost:5173`
 - Server API: `http://localhost:18300`
+
+## 开源协议
+
+本项目采用 [MIT License](./LICENSE)。
 
 ## 1.0 发布方式
 
