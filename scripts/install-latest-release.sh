@@ -47,7 +47,6 @@ need_cmd() {
 }
 
 need_cmd curl
-need_cmd python3
 need_cmd unzip
 need_cmd npm
 
@@ -101,29 +100,22 @@ curl -fsSL \
   "$API_URL" \
   -o "$RELEASE_JSON"
 
-readarray -t RELEASE_INFO < <(
-  python3 - "$RELEASE_JSON" <<'PY'
-import json
-import sys
+RELEASE_BODY="$(tr -d '\n' < "$RELEASE_JSON")"
+DOWNLOAD_URL="$(
+  printf '%s' "$RELEASE_BODY" \
+    | grep -Eo 'https://[^"]*manclaw-release-[^"]*\.zip' \
+    | head -n 1
+)"
 
-with open(sys.argv[1], 'r', encoding='utf-8') as handle:
-    release = json.load(handle)
+if [[ -z "$DOWNLOAD_URL" ]]; then
+  DOWNLOAD_URL="$(
+    printf '%s' "$RELEASE_BODY" \
+      | grep -Eo 'https://[^"]*\.zip' \
+      | head -n 1
+  )"
+fi
 
-assets = release.get('assets', [])
-preferred = [asset for asset in assets if asset.get('name', '').startswith('manclaw-release-') and asset.get('name', '').endswith('.zip')]
-fallback = [asset for asset in assets if asset.get('name', '').endswith('.zip')]
-candidates = preferred or fallback
-if not candidates:
-    raise SystemExit('No zip asset found in the latest release.')
-
-asset = candidates[0]
-print(asset['browser_download_url'])
-print(asset['name'])
-PY
-)
-
-DOWNLOAD_URL="${RELEASE_INFO[0]:-}"
-ASSET_NAME="${RELEASE_INFO[1]:-}"
+ASSET_NAME="${DOWNLOAD_URL##*/}"
 
 if [[ -z "$DOWNLOAD_URL" || -z "$ASSET_NAME" ]]; then
   echo "Failed to resolve release asset." >&2
@@ -134,30 +126,31 @@ echo "Downloading ${DOWNLOAD_URL}"
 curl -fsSL "$DOWNLOAD_URL" -o "$ZIP_TMP"
 
 mkdir -p "$TARGET_DIR"
+TARGET_DIR_ABS="$(cd "$TARGET_DIR" && pwd -P)"
+TOP_LEVELS="$(
+  unzip -Z1 "$ZIP_TMP" \
+    | sed '/^__MACOSX\//d;/^$/d' \
+    | awk -F/ '{print $1}' \
+    | awk '!seen[$0]++'
+)"
+TOP_LEVEL_COUNT="$(printf '%s\n' "$TOP_LEVELS" | sed '/^$/d' | wc -l | tr -d ' ')"
+TOP_LEVEL=""
 
-readarray -t EXTRACT_INFO < <(
-  python3 - "$ZIP_TMP" "$TARGET_DIR" <<'PY'
-import os
-import shutil
-import sys
-import zipfile
+if [[ "$TOP_LEVEL_COUNT" == "1" ]]; then
+  TOP_LEVEL="$(printf '%s\n' "$TOP_LEVELS" | sed -n '1p')"
+  if [[ -e "${TARGET_DIR_ABS}/${TOP_LEVEL}" ]]; then
+    rm -rf "${TARGET_DIR_ABS:?}/${TOP_LEVEL}"
+  fi
+fi
 
-zip_path, target_dir = sys.argv[1], os.path.abspath(sys.argv[2])
+unzip -oq "$ZIP_TMP" -d "$TARGET_DIR_ABS"
 
-with zipfile.ZipFile(zip_path) as archive:
-    entries = archive.namelist()
-    top_levels = {entry.split('/', 1)[0] for entry in entries if entry and not entry.startswith('__MACOSX/')}
-    top_level = next(iter(top_levels)) if len(top_levels) == 1 else ''
-    if top_level:
-        destination = os.path.join(target_dir, top_level)
-        if os.path.exists(destination):
-            shutil.rmtree(destination)
-    archive.extractall(target_dir)
-    print(os.path.join(target_dir, top_level) if top_level else target_dir)
-PY
-)
+if [[ -n "$TOP_LEVEL" ]]; then
+  RELEASE_DIR="${TARGET_DIR_ABS}/${TOP_LEVEL}"
+else
+  RELEASE_DIR="$TARGET_DIR_ABS"
+fi
 
-RELEASE_DIR="${EXTRACT_INFO[0]:-}"
 if [[ -z "$RELEASE_DIR" ]]; then
   echo "Failed to determine extracted release directory." >&2
   exit 1
