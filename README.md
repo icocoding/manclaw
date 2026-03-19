@@ -156,6 +156,14 @@ pnpm release:prepare
   - 发布或更新 GitHub Release
   - 附带上传 `install-latest-release.sh`
 
+另外还有一条独立的脚本预发布规则：
+
+- 当 `scripts/install-latest-release.sh` 发生变更时
+- 流水线会更新 `scripts` tag
+- 并发布一个名为 `scripts` 的 pre-release
+- 该 pre-release 只附带 `install-latest-release.sh`
+- 不会作为最新正式发布显示
+
 版本 tag 规则：
 
 - tag 名称固定为 `v<package.json version>`
@@ -200,10 +208,10 @@ MANCLAW_RELEASE_REPO=owner/name bash scripts/install-latest-release.sh
 MANCLAW_RELEASE_REPO=your-name/your-fork
 ```
 
-如果要直接一行安装最新 release：
+如果要直接一行安装脚本预发布通道：
 
 ```bash
-curl -fsSL https://github.com/icocoding/manclaw/releases/latest/download/install-latest-release.sh | bash
+curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash
 ```
 
 ## MVP 说明

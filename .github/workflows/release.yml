@@ -14,7 +14,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      installer_script_changed: ${{ steps.filter.outputs.installer_script }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            installer_script:
+              - 'scripts/install-latest-release.sh'
+
   release:
+    needs: changes
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-latest
 
@@ -100,3 +120,43 @@ jobs:
           allowUpdates: true
           replacesArtifacts: true
           generateReleaseNotes: true
+
+  scripts_release:
+    needs: changes
+    if: needs.changes.outputs.installer_script_changed == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify installer script exists
+        run: test -f scripts/install-latest-release.sh
+
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Move scripts tag to current commit
+        shell: bash
+        run: |
+          TAG="scripts"
+          git tag -d "${TAG}" 2>/dev/null || true
+          git push origin ":refs/tags/${TAG}" || true
+          git tag -fa "${TAG}" -m "Installer script ${TAG}"
+          git push origin "refs/tags/${TAG}" --force
+
+      - name: Publish scripts pre-release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: scripts
+          name: scripts
+          artifacts: scripts/install-latest-release.sh
+          artifactErrorsFailBuild: true
+          allowUpdates: true
+          replacesArtifacts: true
+          prerelease: true
+          makeLatest: false

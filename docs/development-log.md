@@ -113,6 +113,7 @@
 - 调整发布流水线触发规则：只有提交信息包含 `[release]` 时才会继续打包、重打版本 tag 并更新 GitHub Release；同时将 `scripts/install-latest-release.sh` 作为 release 附件一并发布，并在 README 中补充一行安装命令
 - 调整安装脚本默认仓库：`scripts/install-latest-release.py` 与 `scripts/install-latest-release.sh` 现在默认指向 `icocoding/manclaw`，远程一行安装不再需要额外传 `--repo`
 - 补充 fork 提示：两个安装脚本在回退到默认仓库 `icocoding/manclaw` 时，会明确提示 fork 用户改用 `--repo owner/name` 或 `MANCLAW_RELEASE_REPO`
+- 增加脚本专用预发布通道：当 `scripts/install-latest-release.sh` 变更时，GitHub Actions 会单独更新 `scripts` tag，并发布同名 pre-release，仅附带 `install-latest-release.sh`，且不作为最新正式发布展示
 
 ### 当前限制
 
