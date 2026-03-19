@@ -109,6 +109,7 @@
 - 增加开源协议：新增根目录 `LICENSE`，项目当前采用 `MIT License`；README 文档入口与根 `package.json` 的 `license` 字段已同步更新
 - 调整 README 展示：在首页顶部加入 `ManClaw` logo，并将主标题统一为 `ManClaw`
 - 为当前仓库配置本地 Git 代理：按环境变量写入 `.git/config` 的 `http.proxy` / `https.proxy`，便于后续通过代理执行 `fetch` / `push`
+- 修复 GitHub Actions 缺少锁文件的问题：取消 `.gitignore` 对 `pnpm-lock.yaml` 的忽略，改为将根锁文件纳入版本控制，便于 CI 正常执行 `pnpm install --frozen-lockfile`
 
 ### 当前限制
 
