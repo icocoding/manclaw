@@ -180,6 +180,23 @@ npm install --omit=dev
 npm start
 ```
 
+如果希望安装到全局命令：
+
+```bash
+cd manclaw-release
+npm install -g .
+manclaw start
+manclaw status
+manclaw restart
+manclaw stop
+```
+
+全局 CLI 默认会把运行数据放到 `~/.manclaw-home`。如果需要自定义目录：
+
+```bash
+MANCLAW_HOME=/path/to/manclaw-home manclaw start
+```
+
 如果要自动下载 GitHub 最新 release zip、解压并安装依赖：
 
 ```bash

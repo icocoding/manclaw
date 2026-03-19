@@ -177,6 +177,51 @@ const RECOMMENDED_SKILLS: Array<Omit<RecommendedSkill, 'installed'>> = [
   },
 ]
 
+function getClawhubExecArgs(workspaceDir: string, action: 'install' | 'update', slug: string, force = false): string[] {
+  const args = [
+    'exec',
+    '--yes',
+    'clawhub',
+    '--',
+    '--no-input',
+    '--registry',
+    CLAWHUB_REGISTRY,
+    '--workdir',
+    workspaceDir,
+    '--dir',
+    'skills',
+    action,
+  ]
+
+  if (force) {
+    args.push('--force')
+  }
+
+  args.push(slug)
+  return args
+}
+
+function formatExternalCommandError(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) {
+    return fallback
+  }
+
+  const commandError = error as Error & { code?: string; stderr?: string; stdout?: string }
+  if (commandError.code === 'ENOENT') {
+    return '系统未找到 npm 命令。请先安装 Node.js/npm，并确认 npm 已加入 PATH。'
+  }
+
+  const stderr = typeof commandError.stderr === 'string' ? commandError.stderr.trim() : ''
+  const stdout = typeof commandError.stdout === 'string' ? commandError.stdout.trim() : ''
+  const output = summarizeCommandOutput(stderr || stdout || commandError.message)
+
+  if (/could not determine executable to run/i.test(output) || /clawhub/i.test(output) && /not found/i.test(output)) {
+    return 'npm 可用，但无法执行 clawhub。请确认网络正常，或先手动执行 `npm exec --yes clawhub -- --help` 排查。'
+  }
+
+  return output || fallback
+}
+
 function nowIso(): string {
   return new Date().toISOString()
 }
@@ -922,14 +967,10 @@ export class ManClawManager {
         message: '已安装，无需重复安装。',
       }
     }
-    const args = ['dlx', 'clawhub', '--no-input', '--registry', CLAWHUB_REGISTRY, '--workdir', workspaceDir, '--dir', 'skills', 'install']
-    if (force) {
-      args.push('--force')
-    }
-    args.push(slug)
+    const args = getClawhubExecArgs(workspaceDir, 'install', slug, force)
 
     try {
-      const { stdout, stderr } = await execFileAsync('pnpm', args, {
+      const { stdout, stderr } = await execFileAsync('npm', args, {
         cwd: this.rootDir,
         timeout: 60 * 1000,
         maxBuffer: 1024 * 1024 * 8,
@@ -944,12 +985,7 @@ export class ManClawManager {
         message,
       }
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? 'stderr' in error && typeof error.stderr === 'string'
-            ? summarizeCommandOutput(error.stderr || error.message)
-            : error.message
-          : 'Skill install failed.'
+      const message = formatExternalCommandError(error, 'Skill install failed.')
       await this.appendAuditLog(`skills.install slug=${slug} status=failed`)
       await this.appendRuntimeLog('error', `skill install failed: ${slug} (${message})`)
       throw new Error(message)
@@ -1044,8 +1080,8 @@ export class ManClawManager {
 
     try {
       const { stdout, stderr } = await execFileAsync(
-        'pnpm',
-        ['dlx', 'clawhub', '--no-input', '--registry', CLAWHUB_REGISTRY, '--workdir', workspaceDir, '--dir', 'skills', 'update', slug],
+        'npm',
+        getClawhubExecArgs(workspaceDir, 'update', slug),
         {
           cwd: this.rootDir,
           timeout: 60 * 1000,
@@ -1062,12 +1098,7 @@ export class ManClawManager {
         message,
       }
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? 'stderr' in error && typeof error.stderr === 'string'
-            ? summarizeCommandOutput(error.stderr || error.message)
-            : error.message
-          : 'Skill update failed.'
+      const message = formatExternalCommandError(error, 'Skill update failed.')
       await this.appendAuditLog(`skills.update slug=${slug} status=failed`)
       await this.appendRuntimeLog('error', `skill update failed: ${slug} (${message})`)
       throw new Error(message)
@@ -1111,16 +1142,12 @@ export class ManClawManager {
       }
 
       try {
-        const { stdout, stderr } = await execFileAsync(
-          'pnpm',
-          ['dlx', 'clawhub', '--no-input', '--registry', CLAWHUB_REGISTRY, '--workdir', workspaceDir, '--dir', 'skills', 'install', slug],
-          {
-            cwd: this.rootDir,
-            timeout: 60 * 1000,
-            maxBuffer: 1024 * 1024 * 8,
-            env: process.env,
-          },
-        )
+        const { stdout, stderr } = await execFileAsync('npm', getClawhubExecArgs(workspaceDir, 'install', slug), {
+          cwd: this.rootDir,
+          timeout: 60 * 1000,
+          maxBuffer: 1024 * 1024 * 8,
+          env: process.env,
+        })
 
         const message = summarizeCommandOutput(stdout || stderr)
         results.push({
@@ -1132,12 +1159,7 @@ export class ManClawManager {
         await this.appendAuditLog(`skills.install slug=${slug} status=completed`)
         await this.appendRuntimeLog('info', `recommended skill installed: ${slug} (${message})`)
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? 'stderr' in error && typeof error.stderr === 'string'
-              ? summarizeCommandOutput(error.stderr || error.message)
-              : error.message
-            : 'Skill install failed.'
+        const message = formatExternalCommandError(error, 'Skill install failed.')
         results.push({
           slug,
           ok: false,

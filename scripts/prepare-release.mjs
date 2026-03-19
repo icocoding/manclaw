@@ -14,8 +14,10 @@ const artifactsDir = path.join(rootDir, 'release-artifacts')
 const zipPath = path.join(artifactsDir, `${releaseName}-v${releaseVersion}.zip`)
 const serverSource = path.join(rootDir, 'apps', 'server', 'dist', 'index.js')
 const webSource = path.join(rootDir, 'apps', 'web', 'dist')
+const cliSource = path.join(rootDir, 'scripts', 'release-cli.mjs')
 const serverTargetDir = path.join(releaseDir, 'server')
 const webTargetDir = path.join(releaseDir, 'web', 'dist')
+const cliTarget = path.join(releaseDir, 'cli.mjs')
 
 await rm(releaseDir, { recursive: true, force: true })
 await rm(artifactsDir, { recursive: true, force: true })
@@ -25,6 +27,7 @@ await mkdir(artifactsDir, { recursive: true })
 
 await cp(serverSource, path.join(serverTargetDir, 'index.js'))
 await cp(webSource, webTargetDir, { recursive: true })
+await cp(cliSource, cliTarget)
 
 const releasePackage = {
   name: releaseName,
@@ -32,6 +35,9 @@ const releasePackage = {
   private: true,
   type: 'module',
   description: 'Standalone ManClaw release package.',
+  bin: {
+    manclaw: './cli.mjs',
+  },
   scripts: {
     start: 'node server/index.js',
   },
@@ -51,6 +57,18 @@ const releaseReadme = `# ManClaw Release
 npm install --omit=dev
 npm start
 \`\`\`
+
+## Global CLI
+
+\`\`\`bash
+npm install -g .
+manclaw start
+manclaw status
+manclaw stop
+\`\`\`
+
+By default, runtime files are stored under \`~/.manclaw-home\`.
+You can override this with \`MANCLAW_HOME=/path/to/home\`.
 
 Default port: \`18300\`
 Override port:

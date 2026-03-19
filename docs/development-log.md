@@ -115,6 +115,10 @@
 - 补充 fork 提示：两个安装脚本在回退到默认仓库 `icocoding/manclaw` 时，会明确提示 fork 用户改用 `--repo owner/name` 或 `MANCLAW_RELEASE_REPO`
 - 增加脚本专用预发布通道：当 `scripts/install-latest-release.sh` 变更时，GitHub Actions 会单独更新 `scripts` tag，并发布同名 pre-release，仅附带 `install-latest-release.sh`，且不作为最新正式发布展示
 - 将 shell 安装脚本改成纯 shell：去掉对 `python3` 和 `readarray` 的依赖，改用 `curl + grep/sed + unzip` 实现，兼容 macOS 默认 Bash 3.2 环境
+- 增强 shell 安装脚本交互：安装过程中增加阶段提示，结束时明确打印安装目录、启动命令、换端口启动命令、后续更新命令和默认访问地址
+- 为发布包增加全局 CLI：新增 `scripts/release-cli.mjs`，`manclaw-release` 现可通过 `npm install -g .` 提供 `manclaw start|stop|restart|status|logs|info` 命令；安装脚本与 README 已同步补充全局安装和控制方式
+- 调整全局 CLI 的运行目录：为避免全局安装目录不可写，`manclaw` 命令默认把运行数据写到 `~/.manclaw-home`，并支持通过 `MANCLAW_HOME` 覆盖
+- 调整 skills 命令执行器：把后端所有 `pnpm dlx clawhub` 调用统一改成 `npm exec --yes clawhub -- ...`，并补充“缺少 npm / 无法执行 clawhub” 的中文错误提示，避免前端只看到模糊失败信息
 
 ### 当前限制
 

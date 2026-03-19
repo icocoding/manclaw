@@ -50,6 +50,10 @@ need_cmd curl
 need_cmd unzip
 need_cmd npm
 
+log() {
+  printf '[manclaw-install] %s\n' "$1"
+}
+
 detect_repo_slug() {
   if [[ -n "$REPO" ]]; then
     printf '%s\n' "$REPO"
@@ -85,14 +89,16 @@ if [[ "$REPO" != "$DEFAULT_REPO" ]]; then
 fi
 
 if [[ "$USING_DEFAULT_REPO" == "1" ]]; then
-  echo "Using default release repo: ${DEFAULT_REPO}" >&2
-  echo "If you are installing from a fork, pass --repo owner/name or set MANCLAW_RELEASE_REPO." >&2
+  log "Using default release repo: ${DEFAULT_REPO}"
+  log "If you are installing from a fork, pass --repo owner/name or set MANCLAW_RELEASE_REPO."
 fi
 
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 RELEASE_JSON="$(mktemp)"
 ZIP_TMP="$(mktemp)"
 trap 'rm -f "$RELEASE_JSON" "$ZIP_TMP"' EXIT
+
+log "Fetching latest release metadata from ${REPO}"
 
 curl -fsSL \
   -H 'Accept: application/vnd.github+json' \
@@ -122,7 +128,7 @@ if [[ -z "$DOWNLOAD_URL" || -z "$ASSET_NAME" ]]; then
   exit 1
 fi
 
-echo "Downloading ${DOWNLOAD_URL}"
+log "Downloading ${ASSET_NAME}"
 curl -fsSL "$DOWNLOAD_URL" -o "$ZIP_TMP"
 
 mkdir -p "$TARGET_DIR"
@@ -139,10 +145,12 @@ TOP_LEVEL=""
 if [[ "$TOP_LEVEL_COUNT" == "1" ]]; then
   TOP_LEVEL="$(printf '%s\n' "$TOP_LEVELS" | sed -n '1p')"
   if [[ -e "${TARGET_DIR_ABS}/${TOP_LEVEL}" ]]; then
+    log "Replacing existing directory: ${TARGET_DIR_ABS}/${TOP_LEVEL}"
     rm -rf "${TARGET_DIR_ABS:?}/${TOP_LEVEL}"
   fi
 fi
 
+log "Extracting release into ${TARGET_DIR_ABS}"
 unzip -oq "$ZIP_TMP" -d "$TARGET_DIR_ABS"
 
 if [[ -n "$TOP_LEVEL" ]]; then
@@ -156,9 +164,45 @@ if [[ -z "$RELEASE_DIR" ]]; then
   exit 1
 fi
 
-echo "Extracted to ${RELEASE_DIR}"
+log "Release extracted to ${RELEASE_DIR}"
 
 if [[ "$SKIP_INSTALL" != "1" ]]; then
+  log "Installing production dependencies"
   (cd "$RELEASE_DIR" && npm install --omit=dev)
-  echo "Dependencies installed in ${RELEASE_DIR}"
+  log "Dependencies installed in ${RELEASE_DIR}"
+else
+  log "Skipped npm install"
 fi
+
+cat <<EOF
+
+ManClaw is ready.
+
+Install directory:
+  ${RELEASE_DIR}
+
+Start:
+  cd "${RELEASE_DIR}" && npm start
+
+Install global CLI:
+  npm install -g "${RELEASE_DIR}"
+
+Control with global CLI:
+  manclaw start
+  manclaw status
+  manclaw restart
+  manclaw stop
+
+Global runtime home:
+  ~/.manclaw-home
+  override with MANCLAW_HOME=/path/to/home
+
+Preview on another port:
+  cd "${RELEASE_DIR}" && PORT=18301 npm start
+
+Update later:
+  curl -fsSL https://github.com/${DEFAULT_REPO}/releases/download/scripts/install-latest-release.sh | bash -s -- --target-dir "${TARGET_DIR_ABS}"
+
+Open:
+  http://localhost:18300
+EOF
