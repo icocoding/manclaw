@@ -105,6 +105,7 @@
 - 增加 shell 安装脚本：新增 `scripts/install-latest-release.sh`，支持按 GitHub latest release 自动下载 zip、解压并在目标目录执行 `npm install --omit=dev`
 - 调整根级 `preview`：改为使用 `manclaw-release/` 目录，并已验证 `pnpm preview` 能完成依赖安装并成功启动 release server
 - 初始化 Git 仓库并完成首个源码提交；同步补充 `.gitignore`，忽略 `manclaw-release/`、`release-artifacts/` 以及 Python `__pycache__` / `*.pyc` 缓存文件
+- 增加 GitHub Actions 发布流水线：推送到 `master` 后自动安装依赖、执行 `typecheck`、构建 `manclaw-release`、生成 zip，并按 `v<version>` 规则重打 tag 与更新 GitHub Release；版本号不变时会直接移动同名 tag
 
 ### 当前限制
 

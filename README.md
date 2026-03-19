@@ -131,6 +131,27 @@ pnpm release:prepare
 - `manclaw-release/package.json`
 - `release-artifacts/manclaw-release-v<version>.zip`
 
+## Git Pipeline
+
+仓库已增加 GitHub Actions 发布流水线：
+
+- 工作流文件：`.github/workflows/release.yml`
+- 触发条件：推送到 `master`
+- 执行动作：
+  - `pnpm install --frozen-lockfile`
+  - `pnpm typecheck`
+  - `pnpm release:prepare`
+  - 生成 `release-artifacts/manclaw-release-v<version>.zip`
+  - 发布或更新 GitHub Release
+
+版本 tag 规则：
+
+- tag 名称固定为 `v<package.json version>`
+- 每次推送到 `master` 都会把当前版本 tag 移动到最新提交
+- 如果版本号没有变化，现有 tag 和 GitHub Release 会被更新，而不是新建一个版本号
+
+也就是说，`0.1.0` 连续多次提交时，流水线会持续重打 `v0.1.0`
+
 然后进入 `manclaw-release/` 即可独立安装运行：
 
 ```bash
