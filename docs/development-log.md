@@ -108,6 +108,7 @@
 - 增加 GitHub Actions 发布流水线：推送到 `master` 后自动安装依赖、执行 `typecheck`、构建 `manclaw-release`、生成 zip，并按 `v<version>` 规则重打 tag 与更新 GitHub Release；版本号不变时会直接移动同名 tag
 - 增加开源协议：新增根目录 `LICENSE`，项目当前采用 `MIT License`；README 文档入口与根 `package.json` 的 `license` 字段已同步更新
 - 调整 README 展示：在首页顶部加入 `ManClaw` logo，并将主标题统一为 `ManClaw`
+- 为当前仓库配置本地 Git 代理：按环境变量写入 `.git/config` 的 `http.proxy` / `https.proxy`，便于后续通过代理执行 `fetch` / `push`
 
 ### 当前限制
 
