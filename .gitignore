@@ -7,3 +7,5 @@ coverage
 .DS_Store
 manclaw-release
 release-artifacts
+__pycache__
+*.pyc
