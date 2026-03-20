@@ -602,6 +602,11 @@ a {
   gap: 12px;
 }
 
+.button-row > *,
+.shell-controls > * {
+  min-width: 0;
+}
+
 .button {
   border: 0;
   border-radius: 16px;
@@ -689,6 +694,15 @@ a {
   background: rgba(17, 14, 12, 0.82);
 }
 
+.field-control {
+  width: 100%;
+}
+
+.editor-host :deep(textarea),
+.editor-host textarea {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
 .editor {
   min-height: 360px;
   padding: 16px;
@@ -730,12 +744,12 @@ a {
   grid-column: span 2;
 }
 
+.field--full {
+  grid-column: 1 / -1;
+}
+
 .field--checkbox {
   align-content: center;
-  grid-auto-flow: column;
-  justify-content: flex-start;
-  align-items: center;
-  gap: 10px;
   min-height: 48px;
   padding: 0 2px;
 }
@@ -751,6 +765,10 @@ a {
   padding: 16px;
   overflow: auto;
   white-space: pre-wrap;
+}
+
+.shell-select {
+  flex: 1 1 320px;
 }
 
 .status-text {

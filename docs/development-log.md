@@ -119,6 +119,21 @@
 - 为发布包增加全局 CLI：新增 `scripts/release-cli.mjs`，`manclaw-release` 现可通过 `npm install -g .` 提供 `manclaw start|stop|restart|status|logs|info` 命令；安装脚本与 README 已同步补充全局安装和控制方式
 - 调整全局 CLI 的运行目录：为避免全局安装目录不可写，`manclaw` 命令默认把运行数据写到 `~/.manclaw-home`，并支持通过 `MANCLAW_HOME` 覆盖
 - 调整 skills 命令执行器：把后端所有 `pnpm dlx clawhub` 调用统一改成 `npm exec --yes clawhub -- ...`，并补充“缺少 npm / 无法执行 clawhub” 的中文错误提示，避免前端只看到模糊失败信息
+- 调整 `scripts/install-latest-release.sh` 默认安装行为：解压 latest release 后不再只执行目录内依赖安装，而是直接运行 `npm install -g <release-dir>` 完成全局 CLI 安装；README 文案同步更新
+- 新增品牌宣传图素材：添加 `docs/assets/manclaw-promo.svg`，基于现有 `ManClaw` 标记产出横版宣传图，可用于 README、发布页或分享封面
+- 清理前端未使用依赖：移除 `apps/web` 中未实际接入的 `naive-ui`；同时在 `AGENTS.md` 增加前端约定，明确优先复用现成组件库或项目内已有组件，避免重复手写基础控件
+- 继续完成前端组件化：重新接入 `naive-ui`，并将概览页、技能页和重启提示中的主要输入框、文本域、复选框、下拉框和按钮切换为现成组件；同时为 `Forge` / `Harbor` 两套主题补上 `naive-ui` 深色主题覆盖
+- 微调 `ManClaw` 品牌图标：将 `apps/web/public/manclaw-mark.svg` 中间 `M` 和两侧钳子提亮，增强在深色背景下的识别度
+- 继续微调 `ManClaw` 图标主色：将中间 `M` 和两侧钳子从亮铜色进一步推向金色，提高品牌高光感和封面场景下的视觉穿透力
+- 调整 `ManClaw` 图标明暗对比：由于金色主体与背景渐变过近，进一步把中间 `M` 和两侧钳子提到浅金高光区间，增强图标主体与底色的分离度
+- 继续优化 `ManClaw` 图标可读性：为中间 `M` 和两侧钳子增加深棕描边，在保留浅金主体的同时拉开与背景的边界，提升 favicon 和品牌位的小尺寸识别度
+- 调整接入设置表单布局：将 `autoStart` 和 `autoRestart` 两个复选框改为各占一整行，避免并排时视觉过挤
+- 修正接入设置复选框在宽屏下仍会与其他字段同排的问题：新增整行占位类 `field--full`，让 `autoStart` 和 `autoRestart` 始终独占一行
+- 重绘 `ManClaw` logo 两侧轮廓：收紧原本偏“翅膀感”的外形，改成更厚、更短、夹口更明确的钳子形态，提升图标语义识别
+- 继续重构 `ManClaw` logo 造型：将两侧改为更硬朗的机械钳折线轮廓，并把中间 `M` 的两只脚替换成钳口结构，弱化纯字母感，强化“机械爪”识别
+- 继续精简 `ManClaw` logo：移除两侧独立钳子，仅保留中心主体，并放大 `M` 底部两只钳口，让标识更集中、更像单体机械爪
+- 重新设计 `ManClaw` logo 主体：放弃分离式外侧结构，改成以大写 `M` 为中心骨架，并让 `M` 两只脚向外长出放大的钳口，统一图形语义为“字母 + 机械爪”
+- 继续收紧 `ManClaw` logo 一体感：将 `M` 主体与底部钳口改成连续衔接关系，去掉“后贴部件”观感，统一为一个主轮廓加内层高光的结构
 
 ### 当前限制
 

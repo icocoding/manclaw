@@ -5,19 +5,21 @@
         <p class="panel__label">需要重启</p>
         <strong>OpenClaw</strong>
       </div>
-      <button class="button button--ghost button--small" :disabled="busy" @click="$emit('dismiss')">关闭</button>
+      <n-button tertiary size="small" :disabled="busy" @click="$emit('dismiss')">关闭</n-button>
     </div>
     <p :class="variant === 'inline' ? 'inline-restart__message' : 'floating-restart__message'">{{ message }}</p>
     <div class="button-row">
-      <button class="button" :disabled="busy" @click="$emit('restart')">
+      <n-button type="primary" :disabled="busy" @click="$emit('restart')">
         {{ busy ? '重启中...' : '立即重启' }}
-      </button>
-      <button class="button button--ghost" :disabled="busy" @click="$emit('dismiss')">{{ variant === 'inline' ? '稍后' : '稍后' }}</button>
+      </n-button>
+      <n-button tertiary :disabled="busy" @click="$emit('dismiss')">{{ variant === 'inline' ? '稍后' : '稍后' }}</n-button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { NButton } from 'naive-ui'
+
 defineProps<{
   message: string
   busy: boolean

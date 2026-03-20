@@ -14,9 +14,9 @@
           @restart="restartFromNotice"
           @dismiss="closeRestartNotice"
         />
-        <button class="button button--ghost" :disabled="busy.refresh" @click="refreshAll">
+        <n-button tertiary :disabled="busy.refresh" @click="refreshAll">
           {{ busy.refresh ? '刷新中...' : '刷新全部' }}
-        </button>
+        </n-button>
         <span class="badge" :class="statusClass">{{ serviceStatusLabel }}</span>
       </div>
     </header>
@@ -34,47 +34,46 @@
         <div class="form-grid">
           <label class="field field--span-2">
             <span class="field__label">可执行文件路径</span>
-            <input v-model="managerForm.command" class="input" type="text" placeholder="/path/to/openclaw" />
+            <n-input v-model:value="managerForm.command" class="field-control" placeholder="/path/to/openclaw" />
           </label>
 
           <label class="field">
             <span class="field__label">进程名</span>
-            <input v-model="managerForm.processName" class="input" type="text" placeholder="openclaw" />
+            <n-input v-model:value="managerForm.processName" class="field-control" placeholder="openclaw" />
           </label>
 
           <label class="field">
             <span class="field__label">工作目录</span>
-            <input v-model="managerForm.cwd" class="input" type="text" placeholder="/path/to/workspace" />
+            <n-input v-model:value="managerForm.cwd" class="field-control" placeholder="/path/to/workspace" />
           </label>
 
           <label class="field">
             <span class="field__label">配置文件路径</span>
-            <input v-model="managerForm.configPath" class="input" type="text" placeholder="/path/to/openclaw.json" />
+            <n-input v-model:value="managerForm.configPath" class="field-control" placeholder="/path/to/openclaw.json" />
           </label>
 
           <label class="field field--span-2">
             <span class="field__label">启动参数</span>
-            <textarea
-              v-model="managerForm.argsText"
-              class="editor editor--compact"
-              spellcheck="false"
+            <n-input
+              v-model:value="managerForm.argsText"
+              class="field-control"
+              type="textarea"
+              :autosize="{ minRows: 5, maxRows: 8 }"
               placeholder="每行一个参数，例如：&#10;gateway&#10;--port&#10;18789"
-            ></textarea>
+            />
           </label>
 
-          <label class="field field--checkbox">
-            <input v-model="managerForm.autoStart" type="checkbox" />
-            <span class="field__label">启动 manclaw 时自动拉起 openclaw</span>
-          </label>
+          <div class="field field--checkbox field--full">
+            <n-checkbox v-model:checked="managerForm.autoStart">启动 manclaw 时自动拉起 openclaw</n-checkbox>
+          </div>
 
-          <label class="field field--checkbox">
-            <input v-model="managerForm.autoRestart" type="checkbox" />
-            <span class="field__label">openclaw 异常退出后自动重启</span>
-          </label>
+          <div class="field field--checkbox field--full">
+            <n-checkbox v-model:checked="managerForm.autoRestart">openclaw 异常退出后自动重启</n-checkbox>
+          </div>
         </div>
 
         <div class="button-row">
-          <button class="button" :disabled="busy.settings" @click="saveManagerSettings">保存接入设置</button>
+          <n-button type="primary" :disabled="busy.settings" @click="saveManagerSettings">保存接入设置</n-button>
         </div>
 
         <p class="status-text">{{ managerMessage }}</p>
@@ -130,7 +129,7 @@
         </div>
 
         <div class="button-row">
-          <button class="button" @click="openQuickModelModal">打开快速配置</button>
+          <n-button type="primary" @click="openQuickModelModal">打开快速配置</n-button>
         </div>
 
         <p class="status-text">{{ quickModelMessage }}</p>
@@ -158,12 +157,12 @@
         <p class="panel__muted">当前命令：{{ service.command ?? '--' }}</p>
       </div>
       <div class="button-row">
-        <button class="button" :disabled="busy.service" @click="controlService('start')">启动</button>
-        <button class="button button--ghost" :disabled="busy.service" @click="controlService('stop')">停止</button>
-        <button class="button button--ghost" :disabled="busy.service" @click="controlService('restart')">重启</button>
-        <button class="button button--ghost" :disabled="busy.shell" @click="runDoctorFix">
+        <n-button type="primary" :disabled="busy.service" @click="controlService('start')">启动</n-button>
+        <n-button tertiary :disabled="busy.service" @click="controlService('stop')">停止</n-button>
+        <n-button tertiary :disabled="busy.service" @click="controlService('restart')">重启</n-button>
+        <n-button tertiary :disabled="busy.shell" @click="runDoctorFix">
           {{ busy.shell ? '执行中...' : 'doctor --fix' }}
-        </button>
+        </n-button>
       </div>
     </section>
 
@@ -177,11 +176,11 @@
           <p class="panel__muted">MVP 当前使用 JSON 配置。</p>
         </div>
 
-        <textarea v-model="configContent" class="editor" spellcheck="false"></textarea>
+        <n-input v-model:value="configContent" type="textarea" class="field-control editor-host" :autosize="{ minRows: 14, maxRows: 24 }" />
 
         <div class="button-row">
-          <button class="button button--ghost" :disabled="busy.config" @click="validateConfig">校验配置</button>
-          <button class="button" :disabled="busy.config" @click="saveConfig">保存配置</button>
+          <n-button tertiary :disabled="busy.config" @click="validateConfig">校验配置</n-button>
+          <n-button type="primary" :disabled="busy.config" @click="saveConfig">保存配置</n-button>
         </div>
 
         <p class="status-text">{{ configMessage }}</p>
@@ -202,9 +201,9 @@
               <p class="panel__muted">{{ formatDateTime(revision.createdAt) }}</p>
               <p class="panel__muted">{{ revision.comment || '无备注' }}</p>
             </div>
-            <button class="button button--ghost button--small" :disabled="busy.config" @click="rollbackConfig(revision.id)">
+            <n-button tertiary size="small" :disabled="busy.config" @click="rollbackConfig(revision.id)">
               回滚
-            </button>
+            </n-button>
           </div>
         </div>
         <p v-else class="panel__muted">暂无配置版本。</p>
@@ -218,7 +217,7 @@
             <p class="panel__label">运行日志</p>
             <h3>服务输出</h3>
           </div>
-          <button class="button button--ghost button--small" :disabled="busy.logs" @click="refreshLogs">刷新</button>
+          <n-button tertiary size="small" :disabled="busy.logs" @click="refreshLogs">刷新</n-button>
         </div>
 
         <div class="log-view">
@@ -257,14 +256,10 @@
       </div>
 
       <div class="shell-controls">
-        <select v-model="selectedCommandId" class="select">
-          <option v-for="command in allowedCommands" :key="command.id" :value="command.id">
-            {{ command.title }} ({{ command.riskLevel }})
-          </option>
-        </select>
-        <button class="button" :disabled="busy.shell || !selectedCommandId" @click="executeCommand">
+        <n-select v-model:value="selectedCommandId" class="field-control shell-select" :options="allowedCommandOptions" />
+        <n-button type="primary" :disabled="busy.shell || !selectedCommandId" @click="executeCommand">
           {{ busy.shell ? '执行中...' : '执行命令' }}
-        </button>
+        </n-button>
       </div>
 
       <p class="status-text">{{ shellMessage }}</p>
@@ -278,48 +273,44 @@
             <p class="panel__label">快速配置模型</p>
             <h3>先把 OpenClaw 接上可用模型</h3>
           </div>
-          <button class="button button--ghost button--small" @click="closeQuickModelModal">关闭</button>
+          <n-button tertiary size="small" @click="closeQuickModelModal">关闭</n-button>
         </div>
 
         <div class="form-grid">
           <label class="field">
             <span class="field__label">提供商</span>
-            <select v-model="quickModelForm.provider" class="select">
-              <option v-for="provider in quickModelProviders" :key="provider.id" :value="provider.id">
-                {{ provider.label }}
-              </option>
-            </select>
+            <n-select v-model:value="quickModelForm.provider" class="field-control" :options="quickProviderOptions" />
           </label>
 
           <label class="field">
             <span class="field__label">模型 ID</span>
-            <input v-model="quickModelForm.model" class="input" type="text" placeholder="例如 gpt-5.2 / claude-opus-4-5 / llama3.3" />
+            <n-input v-model:value="quickModelForm.model" class="field-control" placeholder="例如 gpt-5.2 / claude-opus-4-5 / llama3.3" />
           </label>
 
           <label v-if="selectedQuickProvider?.supportsCustomProviderId" class="field">
             <span class="field__label">自定义提供商 ID</span>
-            <input v-model="quickModelForm.customProviderId" class="input" type="text" placeholder="例如 moonshot / lmstudio" />
+            <n-input v-model:value="quickModelForm.customProviderId" class="field-control" placeholder="例如 moonshot / lmstudio" />
           </label>
 
           <label v-if="selectedQuickProvider?.supportsBaseUrl" class="field">
             <span class="field__label">Base URL</span>
-            <input v-model="quickModelForm.baseUrl" class="input" type="text" placeholder="https://api.example.com/v1" />
+            <n-input v-model:value="quickModelForm.baseUrl" class="field-control" placeholder="https://api.example.com/v1" />
           </label>
 
           <label v-if="selectedQuickProvider?.requiresApiKey" class="field">
             <span class="field__label">API Key</span>
-            <input v-model="quickModelForm.apiKey" class="input" type="password" placeholder="sk-..." />
+            <n-input v-model:value="quickModelForm.apiKey" class="field-control" type="password" show-password-on="click" placeholder="sk-..." />
           </label>
 
           <label v-if="selectedQuickProvider?.supportsCustomProviderId" class="field">
             <span class="field__label">环境变量名</span>
-            <input v-model="quickModelForm.envVarName" class="input" type="text" placeholder="LLM_API_KEY" />
+            <n-input v-model:value="quickModelForm.envVarName" class="field-control" placeholder="LLM_API_KEY" />
           </label>
         </div>
 
         <div class="button-row">
-          <button class="button" :disabled="busy.quickModel" @click="applyQuickModelSetup">应用模型配置</button>
-          <button class="button button--ghost" :disabled="busy.quickModel" @click="closeQuickModelModal">取消</button>
+          <n-button type="primary" :disabled="busy.quickModel" @click="applyQuickModelSetup">应用模型配置</n-button>
+          <n-button tertiary :disabled="busy.quickModel" @click="closeQuickModelModal">取消</n-button>
         </div>
 
         <p class="status-text">{{ quickModelMessage }}</p>
@@ -331,6 +322,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { NButton, NCheckbox, NInput, NSelect } from 'naive-ui'
 
 import { apiRequest } from '../lib/api'
 import RestartNoticeBar from '../components/RestartNoticeBar.vue'
@@ -436,6 +428,14 @@ const serviceStatusLabel = computed(() => {
 const statusClass = computed(() => `badge--${service.value.status}`)
 const selectedQuickProvider = computed(() => quickModelProviders.value.find((item) => item.id === quickModelForm.provider))
 const quickModelSummaryTitle = computed(() => `${quickModelForm.provider}/${quickModelForm.model || '--'}`)
+const quickProviderOptions = computed(() => quickModelProviders.value.map((provider) => ({
+  label: provider.label,
+  value: provider.id,
+})))
+const allowedCommandOptions = computed(() => allowedCommands.value.map((command) => ({
+  label: `${command.title} (${command.riskLevel})`,
+  value: command.id,
+})))
 
 function formatDateTime(value?: string): string {
   if (!value) {

@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
 Usage: install-latest-release.sh [--repo owner/name] [--target-dir DIR] [--skip-install]
 
 Download the latest ManClaw release zip from GitHub releases, extract it,
-and optionally run `npm install --omit=dev`.
+and install it as a global CLI by default.
 Default repo: icocoding/manclaw
 EOF
       exit 0
@@ -167,11 +167,11 @@ fi
 log "Release extracted to ${RELEASE_DIR}"
 
 if [[ "$SKIP_INSTALL" != "1" ]]; then
-  log "Installing production dependencies"
-  (cd "$RELEASE_DIR" && npm install --omit=dev)
-  log "Dependencies installed in ${RELEASE_DIR}"
+  log "Installing ManClaw as a global CLI"
+  npm install -g "$RELEASE_DIR"
+  log "Global CLI installed from ${RELEASE_DIR}"
 else
-  log "Skipped npm install"
+  log "Skipped global install"
 fi
 
 cat <<EOF
@@ -181,24 +181,21 @@ ManClaw is ready.
 Install directory:
   ${RELEASE_DIR}
 
-Start:
-  cd "${RELEASE_DIR}" && npm start
-
-Install global CLI:
-  npm install -g "${RELEASE_DIR}"
-
 Control with global CLI:
   manclaw start
   manclaw status
   manclaw restart
   manclaw stop
 
+If you skipped global install:
+  cd "${RELEASE_DIR}" && npm install --omit=dev && npm start
+
 Global runtime home:
   ~/.manclaw-home
   override with MANCLAW_HOME=/path/to/home
 
 Preview on another port:
-  cd "${RELEASE_DIR}" && PORT=18301 npm start
+  PORT=18301 manclaw start
 
 Update later:
   curl -fsSL https://github.com/${DEFAULT_REPO}/releases/download/scripts/install-latest-release.sh | bash -s -- --target-dir "${TARGET_DIR_ABS}"

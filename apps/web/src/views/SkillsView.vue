@@ -14,9 +14,9 @@
           @restart="restartOpenClaw"
           @dismiss="closeRestartPrompt"
         />
-        <button class="button button--ghost" :disabled="busy.refresh" @click="refreshAll">
+        <n-button tertiary :disabled="busy.refresh" @click="refreshAll">
           {{ busy.refresh ? '刷新中...' : '刷新' }}
-        </button>
+        </n-button>
       </div>
     </header>
 
@@ -37,9 +37,9 @@
               <h3>默认必装技能</h3>
               <p class="panel__muted">self-improving-agent、find-skills、summarize、openclaw-cli、openclaw-policy-check</p>
             </div>
-            <button class="button" :disabled="busy.defaultInstall" @click="installDefaultSkills">
+            <n-button type="primary" :disabled="busy.defaultInstall" @click="installDefaultSkills">
               {{ busy.defaultInstall ? '安装中...' : '安装默认技能' }}
-            </button>
+            </n-button>
           </div>
           <div class="skill-card__badges">
             <span
@@ -54,19 +54,18 @@
         </div>
 
         <div class="shell-controls">
-          <input
-            v-model="skillSlug"
-            class="input"
-            type="text"
+          <n-input
+            v-model:value="skillSlug"
+            class="field-control"
             placeholder="例如 self-improving-agent"
             @keydown.enter.prevent="inspectSkill"
           />
-          <button class="button button--ghost" :disabled="busy.inspect || !skillSlug.trim()" @click="inspectSkill">
+          <n-button tertiary :disabled="busy.inspect || !skillSlug.trim()" @click="inspectSkill">
             {{ busy.inspect ? '查询中...' : '查询说明' }}
-          </button>
-          <button class="button" :disabled="busy.directInstall || !skillSlug.trim()" @click="installDirectSkill">
+          </n-button>
+          <n-button type="primary" :disabled="busy.directInstall || !skillSlug.trim()" @click="installDirectSkill">
             {{ busy.directInstall ? '安装中...' : '直接安装' }}
-          </button>
+          </n-button>
         </div>
 
         <p class="status-text" :class="{ 'status-text--error': inspectIsError }">{{ inspectMessage }}</p>
@@ -90,15 +89,14 @@
           <p class="panel__muted">更新时间：{{ formatDateTime(skillDetail.updatedAt) }}</p>
           <p v-if="skillDetail.warning" class="status-text status-text--error">{{ skillDetail.warning }}</p>
 
-          <label v-if="skillDetail.suspicious && !skillDetail.malwareBlocked" class="field field--checkbox">
-            <input v-model="forceInstall" type="checkbox" />
-            <span class="field__label">我已确认风险，强制安装这个可疑 skill</span>
-          </label>
+          <n-checkbox v-if="skillDetail.suspicious && !skillDetail.malwareBlocked" v-model:checked="forceInstall">
+            我已确认风险，强制安装这个可疑 skill
+          </n-checkbox>
 
           <div class="button-row">
-            <button class="button" :disabled="busy.install || skillDetail.malwareBlocked" @click="installSkill">
+            <n-button type="primary" :disabled="busy.install || skillDetail.malwareBlocked" @click="installSkill">
               {{ busy.install ? '安装中...' : '确认安装' }}
-            </button>
+            </n-button>
           </div>
         </div>
       </article>
@@ -144,33 +142,36 @@
             <span class="badge" :class="skill.state === 'installed' ? 'badge--running' : 'badge--stopped'">
               {{ skill.state === 'installed' ? '已启用' : '已禁用' }}
             </span>
-            <button
+            <n-button
               v-if="skill.state === 'installed'"
-              class="button button--ghost button--small"
+              tertiary
+              size="small"
               :disabled="busy.mutate"
               @click="updateSkill(skill.slug)"
             >
               更新
-            </button>
-            <button
+            </n-button>
+            <n-button
               v-if="skill.state === 'installed'"
-              class="button button--ghost button--small"
+              tertiary
+              size="small"
               :disabled="busy.mutate"
               @click="disableSkill(skill.slug)"
             >
               禁用
-            </button>
-            <button
+            </n-button>
+            <n-button
               v-else
-              class="button button--ghost button--small"
+              tertiary
+              size="small"
               :disabled="busy.mutate"
               @click="enableSkill(skill.slug)"
             >
               启用
-            </button>
-            <button class="button button--ghost button--small" :disabled="busy.mutate" @click="deleteSkill(skill.slug)">
+            </n-button>
+            <n-button tertiary size="small" :disabled="busy.mutate" @click="deleteSkill(skill.slug)">
               删除
-            </button>
+            </n-button>
           </div>
         </div>
       </div>
@@ -184,6 +185,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { computed } from 'vue'
+import { NButton, NCheckbox, NInput } from 'naive-ui'
 
 import { apiRequest } from '../lib/api'
 import RestartNoticeBar from '../components/RestartNoticeBar.vue'

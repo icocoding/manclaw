@@ -197,7 +197,7 @@ manclaw stop
 MANCLAW_HOME=/path/to/manclaw-home manclaw start
 ```
 
-如果要自动下载 GitHub 最新 release zip、解压并安装依赖：
+如果要自动下载 GitHub 最新 release zip、解压并自动全局安装：
 
 ```bash
 python3 scripts/install-latest-release.py
@@ -207,6 +207,13 @@ python3 scripts/install-latest-release.py
 
 ```bash
 bash scripts/install-latest-release.sh
+```
+
+执行完成后可直接使用：
+
+```bash
+manclaw start
+manclaw status
 ```
 
 也可以通过环境变量指定仓库：
