@@ -1,0 +1,788 @@
+<template>
+  <section class="page">
+    <header class="hero hero--wide">
+      <div>
+        <p class="eyebrow">Agents</p>
+        <h2>Agent 管理</h2>
+      </div>
+      <div class="hero__actions">
+        <RestartNoticeBar
+          v-if="restartNotice.open"
+          variant="inline"
+          :busy="busy.restartNotice"
+          :message="restartNotice.message"
+          @restart="restartFromNotice"
+          @dismiss="closeRestartNotice"
+        />
+        <n-button tertiary :disabled="busy.refresh" @click="refreshAll">
+          {{ busy.refresh ? '刷新中...' : '刷新全部' }}
+        </n-button>
+      </div>
+    </header>
+
+    <section class="two-column">
+      <article class="panel panel--stretch">
+        <div class="section-header">
+          <div>
+            <p class="panel__label">默认设置</p>
+            <h3>共享默认 Agent 参数</h3>
+          </div>
+          <p class="panel__muted">当前阶段默认 Agent 采用 `agents.list` 第一项表示；页面保存时会按这里的选择重排顺序。</p>
+        </div>
+
+        <div class="form-grid">
+          <label class="field">
+            <span class="field__label">默认 Agent</span>
+            <n-select
+              :value="defaultAgentId"
+              class="field-control"
+              :options="defaultAgentOptions"
+              placeholder="选择默认 Agent"
+              @update:value="(value) => { defaultAgentId = String(value ?? '') }"
+            />
+          </label>
+
+          <label class="field">
+            <span class="field__label">默认 Workspace</span>
+            <n-input v-model:value="defaults.workspace" class="field-control" placeholder="~/.openclaw/workspace" />
+          </label>
+
+          <label class="field">
+            <span class="field__label">默认模型</span>
+            <n-input v-model:value="defaults.modelPrimary" class="field-control" placeholder="openai/gpt-5.2" />
+          </label>
+
+          <label class="field">
+            <span class="field__label">默认 Compaction</span>
+            <n-input v-model:value="defaults.compactionMode" class="field-control" placeholder="safeguard" />
+          </label>
+        </div>
+
+        <div class="button-row">
+          <n-button type="primary" :disabled="busy.save || !hasPendingChanges" @click="saveAgents">
+            {{ busy.save ? '保存中...' : '保存 Agent 配置' }}
+          </n-button>
+        </div>
+
+        <p class="status-text" :class="{ 'status-text--error': messageIsError }">{{ message }}</p>
+      </article>
+
+      <article class="panel">
+        <div class="section-header">
+          <div>
+            <p class="panel__label">当前摘要</p>
+            <h3>{{ agents.length }} 个 Agent</h3>
+          </div>
+        </div>
+        <p class="panel__muted">默认 Agent：{{ defaultAgentId || '--' }}</p>
+        <p class="panel__muted">渠道绑定总数：{{ totalBindingCount }}</p>
+        <p class="panel__muted">已发现渠道：{{ availableChannelSummary }}</p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="section-header">
+        <div>
+          <p class="panel__label">Agent 列表</p>
+          <h3>逐个配置角色、模型与渠道绑定</h3>
+        </div>
+        <p class="panel__muted">每个 Agent 可配置多条绑定规则；当前支持 `channel` 和可选 `accountId`。</p>
+      </div>
+
+      <template v-if="agents.length">
+        <div class="agent-list">
+          <article v-for="(agent, index) in agents" :key="agent.sourceId || `${agent.id}-${index}`" class="agent-card">
+            <div class="agent-card__head">
+              <div>
+                <div class="agent-card__title">
+                  <h3>{{ agent.id || `agent-${index + 1}` }}</h3>
+                  <span v-if="agent.id === defaultAgentId" class="badge badge--running">默认</span>
+                </div>
+                <p class="panel__muted">#{{ index + 1 }} · sourceId={{ agent.sourceId || 'new' }}</p>
+              </div>
+
+              <div class="button-row">
+                <n-button tertiary size="small" :disabled="busy.save" @click="copyAgent(agent)">复制</n-button>
+                <n-button tertiary size="small" :disabled="busy.save || agents.length === 1" @click="removeAgent(index)">删除</n-button>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <label class="field">
+                <span class="field__label">Agent ID</span>
+                <n-input v-model:value="agent.id" class="field-control" placeholder="main" />
+              </label>
+
+              <label class="field">
+                <span class="field__label">Workspace</span>
+                <n-input v-model:value="agent.workspace" class="field-control" placeholder="留空则继承默认值" />
+              </label>
+
+              <label class="field">
+                <span class="field__label">模型</span>
+                <n-input v-model:value="agent.modelPrimary" class="field-control" placeholder="留空则继承默认值" />
+              </label>
+
+              <label class="field field--span-2">
+                <span class="field__label">Compaction</span>
+                <n-input v-model:value="agent.compactionMode" class="field-control" placeholder="留空则继承默认值" />
+              </label>
+            </div>
+
+            <div class="agent-bindings">
+              <div class="section-header">
+                <div>
+                  <p class="panel__label">绑定规则</p>
+                  <h3>按 Agent 维护 channel 绑定</h3>
+                </div>
+                <p class="panel__muted">保存时会直接写回 `bindings[*].match`。可用 `accountId` 做更细的 Feishu 路由。</p>
+              </div>
+
+              <div v-if="agent.bindings.length" class="agent-binding-list">
+                <div v-for="(binding, bindingIndex) in agent.bindings" :key="binding.id" class="agent-binding-row">
+                  <n-input v-model:value="binding.channel" class="field-control" placeholder="channel，例如 feishu" />
+                  <n-input v-model:value="binding.accountId" class="field-control" placeholder="accountId，可留空" />
+                  <n-button tertiary size="small" :disabled="busy.save" @click="removeBinding(agent, bindingIndex)">删除</n-button>
+                </div>
+              </div>
+              <p v-else class="panel__muted">当前没有绑定规则。</p>
+
+              <div class="agent-bindings__actions">
+                <n-button tertiary size="small" :disabled="busy.save" @click="addBinding(agent)">新增绑定</n-button>
+              </div>
+            </div>
+
+            <div class="agent-tools">
+              <div class="section-header">
+                <div>
+                  <p class="panel__label">Tools策略</p>
+                  <h3>按 Agent 限制工具</h3>
+                </div>
+                <p class="panel__muted">直接写入 `agents.list[].tools.profile / allow / deny`。留空时表示不覆盖该 Agent 的 tools 限制。</p>
+              </div>
+
+              <div class="form-grid">
+                <label class="field">
+                  <span class="field__label">Tools Profile</span>
+                  <n-select
+                    :value="agent.toolsProfile || null"
+                    class="field-control"
+                    clearable
+                    :options="toolsProfileOptions"
+                    placeholder="选择 tools profile"
+                    @update:value="(value) => { agent.toolsProfile = String(value ?? '') }"
+                  />
+                </label>
+
+                <label class="field field--span-2">
+                  <span class="field__label">Allow</span>
+                  <n-input v-model:value="agent.toolsAllowText" class="field-control" placeholder="exec, web, group:plugins" />
+                </label>
+
+                <label class="field field--span-2">
+                  <span class="field__label">Deny</span>
+                  <n-input v-model:value="agent.toolsDenyText" class="field-control" placeholder="browser, exec" />
+                </label>
+              </div>
+            </div>
+
+            <div class="agent-sessions">
+              <div class="section-header">
+                <div>
+                  <p class="panel__label">Session</p>
+                  <h3>{{ agent.sessionCount ?? 0 }} 个会话</h3>
+                </div>
+                <p class="panel__muted">清空后会删除该 agent 的 `sessions.json` 与会话 transcript 文件，用于强制从干净上下文重新开始。</p>
+              </div>
+
+              <p class="panel__muted">Store：{{ agent.sessionStorePath || '--' }}</p>
+              <p class="panel__muted">Transcript 文件数：{{ agent.transcriptFileCount ?? 0 }}</p>
+
+              <div class="agent-sessions__actions">
+                <n-popconfirm
+                  v-model:show="sessionConfirmVisible[agent.id]"
+                  positive-text="确认清空"
+                  negative-text="取消"
+                  @positive-click="confirmClearAgentSessions(agent)"
+                >
+                  <template #trigger>
+                    <n-button
+                      type="warning"
+                      size="small"
+                      :disabled="busy.sessionAction || !agent.id.trim() || !(agent.sessionCount || agent.transcriptFileCount)"
+                    >
+                      {{ busy.sessionAction && busy.sessionAgentId === agent.id ? '清空中...' : '清空Session' }}
+                    </n-button>
+                  </template>
+                  清空 Agent `{{ agent.id }}` 的所有会话和 transcript？
+                </n-popconfirm>
+              </div>
+
+              <p v-if="agent.sessionMessage" class="status-text" :class="{ 'status-text--error': agent.sessionMessageIsError }">
+                {{ agent.sessionMessage }}
+              </p>
+            </div>
+
+            <div class="agent-card__footer">
+              <n-button type="primary" size="small" :disabled="busy.save || !hasPendingChanges" @click="saveAgents">
+                {{ busy.save ? '保存中...' : '保存 Agent 配置' }}
+              </n-button>
+            </div>
+          </article>
+        </div>
+        <div class="agent-list__footer">
+          <n-button tertiary :disabled="busy.save" @click="addAgent">新增 Agent</n-button>
+        </div>
+      </template>
+      <p v-else class="panel__muted">当前没有 Agent 条目。</p>
+    </section>
+
+    <section class="two-column">
+      <article class="panel panel--stretch">
+        <div class="section-header">
+          <div>
+            <p class="panel__label">原始配置联动</p>
+            <h3>当前 openclaw.json</h3>
+          </div>
+          <p class="panel__muted">结构化编辑保存后，这里的只读内容会同步更新。</p>
+        </div>
+
+        <n-input
+          v-model:value="configContent"
+          type="textarea"
+          class="field-control editor-host"
+          :autosize="{ minRows: 12, maxRows: 20 }"
+          readonly
+        />
+      </article>
+
+      <article class="panel">
+        <div class="section-header">
+          <div>
+            <p class="panel__label">已发现渠道</p>
+            <h3>Channel IDs</h3>
+          </div>
+        </div>
+        <div class="agent-channel-list">
+          <span v-for="channel in availableChannels" :key="channel.id" class="badge badge--neutral">{{ channel.label }}</span>
+          <p v-if="availableChannels.length === 0" class="panel__muted">当前配置里还没有可识别的渠道 ID。</p>
+        </div>
+      </article>
+    </section>
+  </section>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref } from 'vue'
+import { NButton, NInput, NPopconfirm, NSelect } from 'naive-ui'
+
+import type {
+  AgentBindingEntry,
+  AgentConfigDocument,
+  AgentConfigEntry,
+  AgentToolsProfile,
+  ConfigDocument,
+  RestartNoticeDocument,
+  ServiceDetail,
+} from '@manclaw/shared'
+
+import RestartNoticeBar from '../components/RestartNoticeBar.vue'
+import { apiRequest } from '../lib/api'
+
+interface EditableAgent extends AgentConfigEntry {
+  toolsProfile: string
+  toolsAllowText: string
+  toolsDenyText: string
+  sessionMessage: string
+  sessionMessageIsError: boolean
+}
+
+const agents = ref<EditableAgent[]>([])
+const configContent = ref('')
+const availableChannels = ref<AgentConfigDocument['availableChannels']>([])
+const defaultAgentId = ref('')
+const lastSavedSnapshot = ref('')
+const defaults = reactive({
+  workspace: '',
+  modelPrimary: '',
+  compactionMode: '',
+})
+const message = ref('在这里维护多个 Agent、默认角色和渠道绑定。')
+const busy = reactive({
+  refresh: false,
+  save: false,
+  sessionAction: false,
+  sessionAgentId: '',
+  restartNotice: false,
+})
+const sessionConfirmVisible = reactive<Record<string, boolean>>({})
+const restartNotice = reactive({
+  open: false,
+  message: '',
+  status: 'Agent 配置已更新，建议重启 OpenClaw 以立即生效。',
+  isError: false,
+})
+
+let localAgentSeed = 0
+let localBindingSeed = 0
+const toolsProfileOptions: Array<{ label: string; value: AgentToolsProfile }> = [
+  { label: 'minimal', value: 'minimal' },
+  { label: 'coding', value: 'coding' },
+  { label: 'messaging', value: 'messaging' },
+  { label: 'full', value: 'full' },
+]
+
+const defaultAgentOptions = computed(() =>
+  agents.value
+    .map((agent, index) => {
+      const agentId = agent.id.trim()
+      if (!agentId) {
+        return null
+      }
+
+      return {
+        label: agentId || `未命名 Agent #${index + 1}`,
+        value: agentId,
+      }
+    })
+    .filter((item): item is { label: string; value: string } => item !== null),
+)
+const totalBindingCount = computed(() => agents.value.reduce((sum, agent) => sum + normalizeBindings(agent.bindings).length, 0))
+const availableChannelSummary = computed(() => (availableChannels.value.length > 0 ? availableChannels.value.map((item) => item.label).join(', ') : '--'))
+const messageIsError = computed(() => /失败|错误|required|duplicate|duplicated|invalid/i.test(message.value))
+const currentPayloadSnapshot = computed(() => JSON.stringify(buildAgentPayload()))
+const hasPendingChanges = computed(() => currentPayloadSnapshot.value !== lastSavedSnapshot.value)
+
+function parseChannels(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  )
+}
+
+function createEditableBinding(partial?: Partial<AgentBindingEntry>): AgentBindingEntry {
+  localBindingSeed += 1
+  return {
+    id: partial?.id?.trim() || `binding::local::${localBindingSeed}`,
+    channel: partial?.channel ?? '',
+    accountId: partial?.accountId ?? '',
+  }
+}
+
+function normalizeBindings(bindings: AgentBindingEntry[]): AgentBindingEntry[] {
+  const seen = new Set<string>()
+
+  return bindings
+    .map((binding) => ({
+      id: binding.id,
+      channel: binding.channel.trim(),
+      accountId: binding.accountId?.trim() || '',
+    }))
+    .filter((binding) => {
+      if (!binding.channel) {
+        return false
+      }
+
+      const key = `${binding.channel}::${binding.accountId}`
+      if (seen.has(key)) {
+        return false
+      }
+
+      seen.add(key)
+      return true
+    })
+}
+
+function createEditableAgent(partial?: Partial<EditableAgent>): EditableAgent {
+  localAgentSeed += 1
+  const sourceId = partial?.sourceId?.trim() || `local::${localAgentSeed}`
+  return {
+    sourceId,
+    id: partial?.id ?? `agent-${localAgentSeed}`,
+    bindings: (partial?.bindings ?? []).map((binding) => createEditableBinding(binding)),
+    workspace: partial?.workspace ?? '',
+    modelPrimary: partial?.modelPrimary ?? '',
+    compactionMode: partial?.compactionMode ?? '',
+    tools: partial?.tools ?? { allow: [], deny: [] },
+    toolsProfile: partial?.toolsProfile ?? partial?.tools?.profile ?? '',
+    toolsAllowText: partial?.toolsAllowText ?? partial?.tools?.allow?.join(', ') ?? '',
+    toolsDenyText: partial?.toolsDenyText ?? partial?.tools?.deny?.join(', ') ?? '',
+    resolvedWorkspace: partial?.resolvedWorkspace,
+    skillsDir: partial?.skillsDir,
+    disabledSkillsDir: partial?.disabledSkillsDir,
+    workspaceSkills: partial?.workspaceSkills ?? [],
+    sessionStorePath: partial?.sessionStorePath,
+    sessionCount: partial?.sessionCount,
+    transcriptFileCount: partial?.transcriptFileCount,
+    sessionMessage: '',
+    sessionMessageIsError: false,
+  }
+}
+
+function nextAvailableAgentId(baseId: string): string {
+  const normalizedBase = baseId.trim() || 'agent'
+  const existingIds = new Set(agents.value.map((agent) => agent.id.trim()).filter(Boolean))
+
+  if (!existingIds.has(normalizedBase)) {
+    return normalizedBase
+  }
+
+  let suffix = 2
+  while (existingIds.has(`${normalizedBase}-${suffix}`)) {
+    suffix += 1
+  }
+
+  return `${normalizedBase}-${suffix}`
+}
+
+function buildAgentPayload(): {
+  defaultAgentId: string
+  defaults: {
+    workspace: string
+    modelPrimary: string
+    compactionMode: string
+  }
+  items: Array<{
+    sourceId: string
+    id: string
+    bindings: Array<{
+      id: string
+      channel: string
+      accountId?: string
+    }>
+    workspace?: string
+    modelPrimary?: string
+    compactionMode?: string
+    tools: {
+      profile?: string
+      allow: string[]
+      deny: string[]
+    }
+  }>
+} {
+  return {
+    defaultAgentId: defaultAgentId.value.trim(),
+    defaults: {
+      workspace: defaults.workspace.trim(),
+      modelPrimary: defaults.modelPrimary.trim(),
+      compactionMode: defaults.compactionMode.trim(),
+    },
+    items: agents.value.map((agent) => ({
+      sourceId: agent.sourceId,
+      id: agent.id.trim(),
+      bindings: normalizeBindings(agent.bindings).map((binding) => ({
+        id: binding.id,
+        channel: binding.channel,
+        accountId: binding.accountId || undefined,
+      })),
+      workspace: agent.workspace?.trim() || undefined,
+      modelPrimary: agent.modelPrimary?.trim() || undefined,
+      compactionMode: agent.compactionMode?.trim() || undefined,
+      tools: {
+        profile: agent.toolsProfile.trim() || undefined,
+        allow: parseChannels(agent.toolsAllowText),
+        deny: parseChannels(agent.toolsDenyText),
+      },
+    })),
+  }
+}
+
+function applyDocument(document: AgentConfigDocument): void {
+  availableChannels.value = document.availableChannels
+  defaults.workspace = document.defaults.workspace
+  defaults.modelPrimary = document.defaults.modelPrimary
+  defaults.compactionMode = document.defaults.compactionMode
+  agents.value = document.items.map((item) =>
+    createEditableAgent({
+      ...item,
+      workspace: item.workspace ?? '',
+      modelPrimary: item.modelPrimary ?? '',
+      compactionMode: item.compactionMode ?? '',
+      tools: item.tools ?? { allow: [], deny: [] },
+      toolsProfile: item.tools?.profile ?? '',
+      toolsAllowText: item.tools?.allow?.join(', ') ?? '',
+      toolsDenyText: item.tools?.deny?.join(', ') ?? '',
+      bindings: item.bindings.map((binding) => createEditableBinding(binding)),
+      resolvedWorkspace: item.resolvedWorkspace,
+      skillsDir: item.skillsDir,
+      disabledSkillsDir: item.disabledSkillsDir,
+      workspaceSkills: item.workspaceSkills ?? [],
+      sessionStorePath: item.sessionStorePath,
+      sessionCount: item.sessionCount,
+      transcriptFileCount: item.transcriptFileCount,
+    }),
+  )
+  defaultAgentId.value = document.defaultAgentId || document.items[0]?.id || ''
+  lastSavedSnapshot.value = JSON.stringify(buildAgentPayload())
+}
+
+function applyRestartNotice(document: RestartNoticeDocument | null): void {
+  restartNotice.open = Boolean(document)
+  restartNotice.message = document?.message ?? ''
+  restartNotice.status = document?.status ?? 'Agent 配置已更新，建议重启 OpenClaw 以立即生效。'
+  restartNotice.isError = document?.isError ?? false
+}
+
+async function openRestartNotice(messageText: string): Promise<void> {
+  const document = await apiRequest<RestartNoticeDocument>('/api/restart-notice', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: messageText,
+      status: 'Agent 配置已更新，建议重启 OpenClaw 以立即生效。',
+      isError: false,
+    }),
+  })
+  applyRestartNotice(document)
+}
+
+async function closeRestartNotice(): Promise<void> {
+  await apiRequest<{ cleared: boolean }>('/api/restart-notice', {
+    method: 'DELETE',
+  })
+  applyRestartNotice(null)
+}
+
+async function refreshAll(): Promise<void> {
+  busy.refresh = true
+  try {
+    const [agentsDocument, configDocument, restartNoticeDocument] = await Promise.all([
+      apiRequest<AgentConfigDocument>('/api/agents/current'),
+      apiRequest<ConfigDocument>('/api/config/current'),
+      apiRequest<RestartNoticeDocument | null>('/api/restart-notice'),
+    ])
+
+    if (!busy.save) {
+      applyDocument(agentsDocument)
+      message.value = '已读取当前 Agent 配置。'
+    }
+    configContent.value = configDocument.content
+    applyRestartNotice(restartNoticeDocument)
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '读取 Agent 配置失败。'
+  } finally {
+    busy.refresh = false
+  }
+}
+
+function addAgent(): void {
+  const agentId = nextAvailableAgentId('agent')
+  agents.value.push(createEditableAgent({ id: agentId, bindings: [] }))
+  if (!defaultAgentId.value) {
+    defaultAgentId.value = agentId
+  }
+}
+
+function copyAgent(agent: EditableAgent): void {
+  const copiedId = nextAvailableAgentId(agent.id || 'agent')
+  agents.value.push(
+    createEditableAgent({
+      ...agent,
+      sourceId: undefined,
+      id: copiedId,
+    }),
+  )
+}
+
+function removeAgent(index: number): void {
+  const [removed] = agents.value.splice(index, 1)
+  if (removed && removed.id === defaultAgentId.value) {
+    defaultAgentId.value = agents.value[0]?.id ?? ''
+  }
+}
+
+function addBinding(agent: EditableAgent): void {
+  agent.bindings.push(createEditableBinding())
+}
+
+function removeBinding(agent: EditableAgent, index: number): void {
+  agent.bindings.splice(index, 1)
+}
+
+async function saveAgents(): Promise<void> {
+  busy.save = true
+  try {
+    const payload = buildAgentPayload()
+
+    const document = await apiRequest<AgentConfigDocument>('/api/agents/save', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+
+    applyDocument(document)
+    message.value = 'Agent 配置已保存。'
+    await openRestartNotice('Agent 配置已更新。建议现在重启 OpenClaw。')
+    const configDocument = await apiRequest<ConfigDocument>('/api/config/current')
+    configContent.value = configDocument.content
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '保存 Agent 配置失败。'
+  } finally {
+    busy.save = false
+  }
+}
+
+async function clearAgentSessions(agent: EditableAgent): Promise<void> {
+  const agentId = agent.id.trim()
+  if (!agentId) {
+    return
+  }
+
+  busy.sessionAction = true
+  busy.sessionAgentId = agentId
+  try {
+    const result = await apiRequest<{ agentId: string; storePath: string; clearedFiles: number }>(
+      `/api/agents/${encodeURIComponent(agentId)}/sessions`,
+      {
+        method: 'DELETE',
+      },
+    )
+    agent.sessionMessage = `已清空 ${result.agentId} 的 session，删除文件数：${result.clearedFiles}`
+    agent.sessionMessageIsError = false
+    await refreshAll()
+  } catch (error) {
+    agent.sessionMessage = error instanceof Error ? error.message : 'Agent session 清空失败。'
+    agent.sessionMessageIsError = true
+  } finally {
+    busy.sessionAction = false
+    busy.sessionAgentId = ''
+  }
+}
+
+async function confirmClearAgentSessions(agent: EditableAgent): Promise<void> {
+  const agentId = agent.id.trim()
+  if (agentId) {
+    sessionConfirmVisible[agentId] = false
+  }
+  await clearAgentSessions(agent)
+}
+
+async function restartFromNotice(): Promise<void> {
+  busy.restartNotice = true
+  try {
+    const result = await apiRequest<ServiceDetail>('/api/openclaw/restart', {
+      method: 'POST',
+    })
+    restartNotice.status = `OpenClaw 已重启，当前状态：${result.status === 'running' ? '运行中' : result.status}`
+    restartNotice.isError = result.status !== 'running'
+    if (result.status === 'running') {
+      await closeRestartNotice()
+    }
+  } catch (error) {
+    restartNotice.status = error instanceof Error ? error.message : 'OpenClaw 重启失败。'
+    restartNotice.isError = true
+  } finally {
+    busy.restartNotice = false
+  }
+}
+
+onMounted(async () => {
+  await refreshAll()
+})
+</script>
+
+<style scoped>
+.agent-list {
+  display: grid;
+  gap: 18px;
+}
+
+.agent-list__footer {
+  margin-top: 18px;
+}
+
+.agent-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+}
+
+.agent-card__footer {
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 78%, var(--text-2) 22%);
+  justify-self: start;
+}
+
+.agent-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.agent-card__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.agent-card__title h3 {
+  margin: 0;
+}
+
+.agent-channel-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.agent-tools {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-bindings {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-binding-list {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-binding-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.agent-bindings__actions {
+  justify-self: start;
+}
+
+.agent-sessions {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-sessions__actions {
+  margin-top: 10px;
+  justify-self: start;
+}
+
+@media (max-width: 900px) {
+  .agent-card__head {
+    flex-direction: column;
+  }
+
+  .agent-binding-row {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

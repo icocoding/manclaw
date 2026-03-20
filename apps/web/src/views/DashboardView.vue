@@ -39,7 +39,7 @@
 
           <label class="field">
             <span class="field__label">进程名</span>
-            <n-input v-model:value="managerForm.processName" class="field-control" placeholder="openclaw" />
+            <n-input v-model:value="managerForm.processName" class="field-control" placeholder="openclaw-gateway" />
           </label>
 
           <label class="field">
@@ -122,14 +122,14 @@
       <article class="panel panel--stretch">
         <div class="section-header">
           <div>
-            <p class="panel__label">快速配置模型</p>
-            <h3>先把 OpenClaw 接上可用模型</h3>
+            <p class="panel__label">模型配置页</p>
+            <h3>独立模型页已开始接管配置</h3>
           </div>
-          <p class="panel__muted">用弹窗快速补齐 API Key、本地 Ollama 或兼容端点。</p>
+          <p class="panel__muted">模型配置正在从概览页弹窗迁移到独立页面，后续会继续扩展多模型能力。</p>
         </div>
 
         <div class="button-row">
-          <n-button type="primary" @click="openQuickModelModal">打开快速配置</n-button>
+          <RouterLink class="nav-action" to="/models">进入模型页</RouterLink>
         </div>
 
         <p class="status-text">{{ quickModelMessage }}</p>
@@ -142,9 +142,9 @@
             <h3>{{ quickModelSummaryTitle }}</h3>
           </div>
         </div>
-        <p class="panel__muted">Provider：{{ quickModelForm.provider || '--' }}</p>
-        <p class="panel__muted">Model：{{ quickModelForm.model || '--' }}</p>
-        <p class="panel__muted" v-if="quickModelForm.baseUrl">Base URL：{{ quickModelForm.baseUrl }}</p>
+        <p class="panel__muted">默认模型：{{ quickModelSummaryTitle }}</p>
+        <p class="panel__muted">条目总数：{{ quickModelEntries.length }}</p>
+        <p class="panel__muted" v-if="defaultQuickModelEntry?.baseUrl">Base URL：{{ defaultQuickModelEntry.baseUrl }}</p>
       </article>
     </section>
 
@@ -179,6 +179,7 @@
         <n-input v-model:value="configContent" type="textarea" class="field-control editor-host" :autosize="{ minRows: 14, maxRows: 24 }" />
 
         <div class="button-row">
+          <n-button tertiary :disabled="busy.config || revisions.length === 0" @click="undoLastConfig">撤回上次修改</n-button>
           <n-button tertiary :disabled="busy.config" @click="validateConfig">校验配置</n-button>
           <n-button type="primary" :disabled="busy.config" @click="saveConfig">保存配置</n-button>
         </div>
@@ -266,63 +267,13 @@
       <pre class="terminal">{{ shellOutput || '暂无命令输出。' }}</pre>
     </section>
 
-    <div v-if="showQuickModelModal" class="modal-overlay" @click.self="closeQuickModelModal">
-      <section class="modal-card">
-        <div class="section-header">
-          <div>
-            <p class="panel__label">快速配置模型</p>
-            <h3>先把 OpenClaw 接上可用模型</h3>
-          </div>
-          <n-button tertiary size="small" @click="closeQuickModelModal">关闭</n-button>
-        </div>
-
-        <div class="form-grid">
-          <label class="field">
-            <span class="field__label">提供商</span>
-            <n-select v-model:value="quickModelForm.provider" class="field-control" :options="quickProviderOptions" />
-          </label>
-
-          <label class="field">
-            <span class="field__label">模型 ID</span>
-            <n-input v-model:value="quickModelForm.model" class="field-control" placeholder="例如 gpt-5.2 / claude-opus-4-5 / llama3.3" />
-          </label>
-
-          <label v-if="selectedQuickProvider?.supportsCustomProviderId" class="field">
-            <span class="field__label">自定义提供商 ID</span>
-            <n-input v-model:value="quickModelForm.customProviderId" class="field-control" placeholder="例如 moonshot / lmstudio" />
-          </label>
-
-          <label v-if="selectedQuickProvider?.supportsBaseUrl" class="field">
-            <span class="field__label">Base URL</span>
-            <n-input v-model:value="quickModelForm.baseUrl" class="field-control" placeholder="https://api.example.com/v1" />
-          </label>
-
-          <label v-if="selectedQuickProvider?.requiresApiKey" class="field">
-            <span class="field__label">API Key</span>
-            <n-input v-model:value="quickModelForm.apiKey" class="field-control" type="password" show-password-on="click" placeholder="sk-..." />
-          </label>
-
-          <label v-if="selectedQuickProvider?.supportsCustomProviderId" class="field">
-            <span class="field__label">环境变量名</span>
-            <n-input v-model:value="quickModelForm.envVarName" class="field-control" placeholder="LLM_API_KEY" />
-          </label>
-        </div>
-
-        <div class="button-row">
-          <n-button type="primary" :disabled="busy.quickModel" @click="applyQuickModelSetup">应用模型配置</n-button>
-          <n-button tertiary :disabled="busy.quickModel" @click="closeQuickModelModal">取消</n-button>
-        </div>
-
-        <p class="status-text">{{ quickModelMessage }}</p>
-      </section>
-    </div>
-
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { NButton, NCheckbox, NInput, NSelect } from 'naive-ui'
+import { RouterLink } from 'vue-router'
 
 import { apiRequest } from '../lib/api'
 import RestartNoticeBar from '../components/RestartNoticeBar.vue'
@@ -334,7 +285,7 @@ import type {
   LogEntry,
   ManagerSettingsDocument,
   QuickModelConfigDocument,
-  QuickModelProvider,
+  QuickModelEntry,
   RestartNoticeDocument,
   ServiceDetail,
   ShellAllowedCommand,
@@ -358,8 +309,9 @@ const configContent = ref('')
 const managerSettings = ref<ManagerSettingsDocument>()
 const managerMessage = ref('可在这里填写非默认的 openclaw 路径和配置路径。配置文件路径会通过环境变量传递。')
 const quickModelProviders = ref<QuickModelConfigDocument['availableProviders']>([])
-const quickModelMessage = ref('刚安装的 OpenClaw 可以先在这里快速接上模型。')
-const showQuickModelModal = ref(false)
+const quickModelMessage = ref('模型配置已迁移到独立页面，后续会继续补齐多模型能力。')
+const quickModelEntries = ref<QuickModelEntry[]>([])
+const quickModelDefaultId = ref('')
 const revisions = ref<ConfigRevision[]>([])
 const runtimeLogs = ref<LogEntry[]>([])
 const auditLogs = ref<LogEntry[]>([])
@@ -394,21 +346,6 @@ const managerForm = reactive({
   autoStart: true,
   autoRestart: true,
 })
-const quickModelForm = reactive<{
-  provider: QuickModelProvider
-  model: string
-  apiKey: string
-  baseUrl: string
-  customProviderId: string
-  envVarName: string
-}>({
-  provider: 'openai',
-  model: 'gpt-5.2',
-  apiKey: '',
-  baseUrl: '',
-  customProviderId: '',
-  envVarName: '',
-})
 
 let refreshTimer: number | undefined
 
@@ -426,12 +363,16 @@ const serviceStatusLabel = computed(() => {
 })
 
 const statusClass = computed(() => `badge--${service.value.status}`)
-const selectedQuickProvider = computed(() => quickModelProviders.value.find((item) => item.id === quickModelForm.provider))
-const quickModelSummaryTitle = computed(() => `${quickModelForm.provider}/${quickModelForm.model || '--'}`)
-const quickProviderOptions = computed(() => quickModelProviders.value.map((provider) => ({
-  label: provider.label,
-  value: provider.id,
-})))
+const defaultQuickModelEntry = computed(() => quickModelEntries.value.find((entry) => entry.id === quickModelDefaultId.value))
+const quickModelSummaryTitle = computed(() => {
+  const entry = defaultQuickModelEntry.value
+  if (!entry) {
+    return '--'
+  }
+
+  const providerName = entry.provider === 'custom-openai' ? entry.customProviderId || 'custom-openai' : entry.provider
+  return `${providerName}/${entry.model || '--'}`
+})
 const allowedCommandOptions = computed(() => allowedCommands.value.map((command) => ({
   label: `${command.title} (${command.riskLevel})`,
   value: command.id,
@@ -481,9 +422,7 @@ async function refreshAll(): Promise<void> {
       applyRestartNotice(restartNoticeDocument)
     }
     quickModelProviders.value = quickModel.availableProviders
-    if (!showQuickModelModal.value && !busy.quickModel) {
-      applyQuickModelSettings(quickModel)
-    }
+    applyQuickModelSettings(quickModel)
     runtimeLogs.value = runtime
     auditLogs.value = audit
     allowedCommands.value = commands.items
@@ -540,20 +479,8 @@ function applyManagerSettings(settings: ManagerSettingsDocument): void {
 }
 
 function applyQuickModelSettings(document: QuickModelConfigDocument): void {
-  quickModelForm.provider = document.current.provider
-  quickModelForm.model = document.current.model
-  quickModelForm.apiKey = document.current.apiKey ?? ''
-  quickModelForm.baseUrl = document.current.baseUrl ?? ''
-  quickModelForm.customProviderId = document.current.customProviderId ?? ''
-  quickModelForm.envVarName = document.current.envVarName ?? ''
-}
-
-function openQuickModelModal(): void {
-  showQuickModelModal.value = true
-}
-
-function closeQuickModelModal(): void {
-  showQuickModelModal.value = false
+  quickModelEntries.value = document.entries
+  quickModelDefaultId.value = document.defaultModelId
 }
 
 function applyRestartNotice(document: RestartNoticeDocument | null): void {
@@ -580,22 +507,6 @@ async function closeRestartNotice(): Promise<void> {
     method: 'DELETE',
   })
   applyRestartNotice(null)
-}
-
-async function refreshQuickModelState(): Promise<void> {
-  const [quickModel, currentConfig, configRevisions, restartNoticeDocument] = await Promise.all([
-    apiRequest<QuickModelConfigDocument>('/api/model-setup/current'),
-    apiRequest<ConfigDocument>('/api/config/current'),
-    apiRequest<ConfigRevision[]>('/api/config/revisions'),
-    apiRequest<RestartNoticeDocument | null>('/api/restart-notice'),
-  ])
-
-  quickModelProviders.value = quickModel.availableProviders
-  applyQuickModelSettings(quickModel)
-  applyRestartNotice(restartNoticeDocument)
-  config.value = currentConfig
-  configContent.value = currentConfig.content
-  revisions.value = configRevisions
 }
 
 async function refreshLogs(): Promise<void> {
@@ -666,33 +577,6 @@ async function saveManagerSettings(): Promise<void> {
   }
 }
 
-async function applyQuickModelSetup(): Promise<void> {
-  busy.quickModel = true
-  try {
-    config.value = await apiRequest<ConfigDocument>('/api/model-setup/apply', {
-      method: 'POST',
-      body: JSON.stringify({
-        provider: quickModelForm.provider,
-        model: quickModelForm.model.trim(),
-        apiKey: quickModelForm.apiKey.trim() || undefined,
-        baseUrl: quickModelForm.baseUrl.trim() || undefined,
-        customProviderId: quickModelForm.customProviderId.trim() || undefined,
-        envVarName: quickModelForm.envVarName.trim() || undefined,
-      }),
-    })
-    configContent.value = config.value.content
-    quickModelMessage.value = '模型配置已写入 openclaw.json。'
-    showQuickModelModal.value = false
-    await refreshQuickModelState()
-    await refreshLogs()
-    await openRestartNotice('模型配置已更新。建议现在重启 OpenClaw。')
-  } catch (error) {
-    quickModelMessage.value = error instanceof Error ? error.message : '模型配置失败。'
-  } finally {
-    busy.quickModel = false
-  }
-}
-
 async function validateConfig(): Promise<void> {
   busy.config = true
   try {
@@ -744,6 +628,24 @@ async function rollbackConfig(revisionId: string): Promise<void> {
     await openRestartNotice(`配置已回滚到 ${revisionId}。建议现在重启 OpenClaw。`)
   } catch (error) {
     configMessage.value = error instanceof Error ? error.message : '配置回滚失败。'
+  } finally {
+    busy.config = false
+  }
+}
+
+async function undoLastConfig(): Promise<void> {
+  busy.config = true
+  try {
+    config.value = await apiRequest<ConfigDocument>('/api/config/undo-last', {
+      method: 'POST',
+    })
+    configContent.value = config.value.content
+    configMessage.value = '已撤回上一次配置修改。'
+    revisions.value = await apiRequest<ConfigRevision[]>('/api/config/revisions')
+    await refreshLogs()
+    await openRestartNotice('配置已撤回到上一个版本。建议现在重启 OpenClaw。')
+  } catch (error) {
+    configMessage.value = error instanceof Error ? error.message : '撤回配置失败。'
   } finally {
     busy.config = false
   }

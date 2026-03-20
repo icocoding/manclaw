@@ -1,5 +1,15 @@
 # 开发记录
 
+## 2026-03-21
+
+### 已完成
+
+- 修复 `openclaw gateway` 运行时的在线状态探测：进程扫描与 service manager 匹配现在会同时识别 `openclaw-gateway` 这类由子命令派生出的真实进程名，避免实际在线却被误判为 `stopped`
+- 将托管服务默认进程名调整为 `openclaw-gateway`，并让默认推导跟随启动子命令生成 `<command>-<subcommand>` 形式的进程名
+- 新增“撤回上次修改”能力：配置区可直接撤回最近一次 `openclaw.json` 变更；同时回滚前也会先备份当前配置，避免回滚操作本身不可逆
+- Agent 详情新增结构化绑定规则编辑：每个 Agent 现在可维护多条 `bindings`，支持 `channel` 与可选 `accountId`，保存时不再把精细绑定信息压平成纯 channel 列表
+- 记录 Agent tools `allow/deny` 语义：`allow` 用于收窄首次暴露给模型的能力集合，`deny` 为更高优先级的最终禁止项；后续做 token 缩减时应按“候选集 -> allow 收窄 -> deny 剔除 -> 仅注入剩余能力摘要”的顺序实现，而不是让模型先自行读取完整 Skill 文档
+
 ## 2026-03-19
 
 ### 已完成
@@ -149,3 +159,101 @@
 2. 将当前轮询刷新升级为实时事件推送
 3. 将技能禁用状态改造成更贴近 OpenClaw 官方配置的实现，而不是目录迁移
 4. 评估是否补充技能搜索、推荐和批量更新能力
+
+## 2026-03-20
+
+### 已完成
+
+- 修正文档记录节奏：后续开发记录按实际日期分段，避免持续堆叠到旧日期下
+- 开始按 `docs/roadmap.md` 推进第 1 项“模型配置页独立”
+- 新增前端独立模型页面与 `/models` 路由
+- 将概览页中的快速模型配置从弹窗改为跳转独立页面入口
+- 在独立模型页接入结构化模型表单，并增加当前 `openclaw.json` 内容联动展示
+- 将模型配置从“单模型表单”扩展为“多个模型条目 + 默认模型”结构
+- 模型页支持新增、删除多个模型条目，并显式选择默认模型
+- `/api/model-setup/current` 与 `/api/model-setup/apply` 同步升级为返回/接收 `entries[] + defaultModelId`
+- 模型配置写入逻辑改为同时维护 `models.providers[*].models` 与 `agents.defaults.model.primary`
+- 概览页模型摘要已兼容新结构，显示默认模型与条目数量
+- 将模型页结构改成“模型列表”视图：列表中可直接维护模型 ID、切换默认模型，并按需展开附加配置
+- 模型列表新增“新增同类 ID”操作：可复用当前 provider 与附加配置，连续维护多个模型 ID
+- 修正模型列表中“展开 / 收起”按钮的布局挤压问题，按钮不再被摘要标签顶乱
+- 将模型页进一步调整为“记录 + 可编辑多选模型 ID”结构：同一条记录内通过可编辑 `select` 维护多个模型 ID，默认模型改为单独选择
+- 调整模型 ID 多选交互：已选 ID 在下拉列表中不可再次点击取消，只能通过 tag 的 `x` 移除
+- 修正模型 ID 新增后在下拉菜单中重复显示的问题：不再把已选 ID 重新作为下拉选项回灌
+- 去掉模型 ID 下拉框，改成每个 ID 独立输入行的列表式编辑，支持逐行新增、修改和删除
+- 修正模型配置保存会重复累加旧 `models` 数组的问题；现在每次保存都会按当前表单重建并去重 provider 下的模型列表
+- 进一步收紧模型保存链路：前端提交前先去重模型 ID，后端按 provider 分组后一次性重建 `models` 数组，避免任何追加式写入残留
+- 为模型删除补充后端关联校验：保存前会检查被删除模型是否仍被 `openclaw.json` 其他路径引用，若存在引用则阻止保存并返回引用位置
+- 将服务端默认监听地址从 `0.0.0.0` 改为 `127.0.0.1`，默认只接受本机访问；如需对外暴露仍可通过 `HOST` 环境变量覆盖
+- 新增 `openclaw plugins list --json` 读取能力，并提供 `GET /api/openclaw/plugins` 只读接口
+- 新增前端插件列表页与 `/plugins` 路由，支持查看插件加载状态、tools、channels、providers 和命令摘要
+- 优化插件页加载反馈：首次进入时增加明确的“正在读取”提示、空状态提示和错误提示，并修正插件告警文案样式类
+- 新增 Feishu tools 配置读写：支持读取和保存 `channels.feishu.tools`，并在插件页提供“仅聊天”预设，便于关闭文档、云盘、Wiki 等无关 tools
+- 将插件列表改成 table 视图并支持行展开；同时明确 `disabled` 表示“已发现但未启用”，不是“待安装”状态
+- 为插件页增加自定义安装命令输入框：允许用户直接填写安装命令并由后端通过 `bash -lc` 在当前 OpenClaw workspace 执行，同时返回命令输出结果并支持执行后刷新插件列表
+- 调整插件页安装命令输入提示为 `openclaw plugins install <path-or-spec>`，并为插件列表增加“全部 / 仅启用 / 仅禁用”筛选及行内启用、禁用操作
+- 将插件页 Feishu 预设拆成“仅飞书通道”和“通道 + chat 工具”两种模式，明确区分飞书消息通道与 `feishu_chat` 工具注册
+- 为 Feishu tools 配置补充 `bitable` 开关，并同步扩展本机 OpenClaw Feishu 插件支持按 `channels.feishu.tools.bitable` 关闭 `feishu_bitable_*`
+- 调整 `manclaw` 托管服务启动环境：默认从子进程环境中剔除 `HTTP_PROXY` / `HTTPS_PROXY` 等代理变量，仅当用户在 `service.env` 中显式设置时才传递，避免 OpenClaw 误走旧代理
+- 将插件页的 Feishu tools 管理并入插件列表展开行，在列表内即可直接查看并修改插件 tools 配置
+- 为插件列表补充单插件详情查询：展开行时调用 `openclaw plugins info <id> --json` 查询当前插件 tools；同时将 Feishu 的可编辑 tools 操作移到“最佳实践”区
+- 收紧插件展开查询策略：禁用插件以及简介中没有 tools 的插件不再触发单插件详情查询，展开区直接说明“无需查询”原因，避免对 `bundled (disabled by default)` 等插件做无意义请求
+- 新增独立 `Agents` 页面与 `/agents` 路由，并接入默认 Agent、Agent 列表和原始配置联动展示
+- 新增 `GET /api/agents/current` 与 `POST /api/agents/save`，结构化读写真实 `openclaw.json` 中的 `agents` / `bindings`
+- Agent 页面支持维护默认 Agent、每个 Agent 的 `channel` 绑定、`model`、`workspace` 与 `compaction`
+- Agent 页面支持新增、复制、删除、启用/停用 Agent 条目，并在保存后接入统一“待重启”提醒
+- Agent 页面补充“技能能力”区：按每个 agent 的 workspace 展示本地 skills，并支持直接安装/删除该 agent 私有 skills
+- 新增 `POST /api/agents/:id/skills/install-one` 与 `DELETE /api/agents/:id/skills/:slug`
+- 技能管理页补充只读运行时技能的启用/禁用：对本地目录外的技能，不再只显示“只读”，而是通过 `openclaw.json -> skills.entries.<slug>.enabled` 做开关
+- `GET /api/skills/installed` 现在会区分 `managementMode=workspace|config`；前者走目录迁移，后者走配置开关
+- 技能管理页进一步拆成 tab 页签：`工作区技能` 与 `系统技能` 分开管理，避免把目录操作和配置开关混在一张表里
+- 调整技能页工作区 tab：不再混入任何只读技能，只保留工作区本地技能
+- 系统技能 tab 新增输入筛选和 `allowBundled` 多选配置，支持直接保存 `skills.allowBundled`
+- 技能页启用/禁用按钮改成差异化颜色：启用用成功色，禁用用警告色
+- Agents 页面新增 session 信息展示与“清空 Session”操作，可按 agent 删除 `sessions.json` 与 transcript 文件
+- 新增 `DELETE /api/agents/:id/sessions`
+- 补充更新 `docs/api.md`、`docs/architecture.md` 与 `docs/roadmap.md`，同步记录多 Agents 配置进入进行中阶段
+- 为 Feishu tools 展示补充“配置中启用 / 配置中禁用”两组摘要，避免被关闭的 tools 因运行时未注册而在界面里完全消失
+- 修正 Feishu 插件在 `Tools = 0` 时的展开提示：不再显示通用的“简介里没有 tools”，改为明确说明“当前未注册运行时 tools”，并继续展示配置中的启用 / 禁用摘要
+- 为所有插件的操作列统一增加 `Tools管理` 按钮，用于直接展开 / 收起当前插件的 tools 区块；启用、禁用按钮保留不变
+- 将 `Tools管理` 改成统一弹窗：禁用插件按钮灰掉不可用；启用插件点击后弹窗展示所有 tools。Feishu 支持勾选并保存，其他插件当前先提供只读 tools 列表
+- 继续统一插件 tools 交互：`展开` 仅展示插件基本信息，`Tools管理` 统一进入弹窗；操作列改成纵向按钮避免溢出，并收紧弹窗宽度。Feishu 可勾选保存，其他插件先保持同一套勾选布局但暂不开放保存
+- 修正统一 tools 弹窗的两个细节：宽度改为直接传给 `n-modal`，避免 `preset=card` 下仍然铺满；非 Feishu 插件补充“当前不能取消勾选并保存”的明确说明
+- 调整插件操作列细节：拉开 `Tools管理` 与启用/禁用按钮的间距，并为启用、禁用操作补充二次确认，减少误触
+- 将 Feishu 的 `Tools管理` 弹窗收敛为与其他插件一致的结构：去掉弹窗内专属预设按钮，只保留统一的勾选列表与保存区；预设按钮继续保留在右侧最佳实践区
+- 进一步精简右侧“最佳实践 / Feishu Tools”区：改成仅保留“一键禁用所有 Tools”按钮；重新开启时引导用户回到插件列表中的 `Tools管理` 弹窗处理
+- 补充 Feishu 最佳实践提示文案：明确“一键禁用所有 Tools”仍保留飞书聊天频道，并说明这样做是为避免无关 tools 注入上下文、减少 token 浪费
+- 调整模型页“新增记录”交互：按钮文案明确为“追加到列表末尾”，新增后自动滚动并高亮新记录，同时聚焦首个输入框，避免误把旧配置当成新建项覆盖
+- 进一步调整模型页新增入口位置：将“新增记录”从列表顶部移到列表底部，保持“先看现有记录，再追加新记录”的顺序，减少把顶部旧配置误认为新建项的概率
+- 调整模型页列表纵向留白：拉开模型记录之间的间距，并增加列表底部“新增记录 / 应用模型配置”区域与上方内容的分隔，降低误触和视觉粘连
+- 调整技能管理页数据源：`/api/skills/installed` 改为优先读取 `openclaw skills list --json` 的真实运行时技能清单，并合并本地目录元数据；现在可显示 `feishu-doc` 等 OpenClaw 运行时 skills，且仅对本地目录中的技能开放启用/禁用/更新/删除操作
+- 调整技能管理页列表布局：将长卡片列表改成 table 视图，把描述、来源、状态、缺失条件与操作收拢到固定列中，减少技能较多时的页面纵向长度
+- 继续压缩技能表格的信息密度：将来源列中的原始长文本（如 `openclaw-bundled`）改成更短的中文标签，并把“资格 / 内置 / 拦截”收敛为 badge 展示，减少重复说明
+- 调整技能表格来源列宽度：为来源列设置更大的最小宽度，优先容纳“来源 / 资格 / 内置”三枚 badge，减少过早换行
+- 修正技能表格 badge 排列方式：将来源列和状态列的 badge 容器从纵向堆叠改为横向自动换行，并继续放宽来源列，避免 badge 一枚一行导致单元格过高
+- 调整技能表格来源列文案：按用户要求取消中文翻译，`source`、`eligible`、`bundled`、`blockedByAllowlist` 改为直接显示原字段值，避免界面对 OpenClaw 原始状态做二次解释
+- 调整技能表格状态与加载反馈：状态列只保留单一运行状态 badge，将“仅展示”移到操作列，同时补充技能列表首次加载中的明确提示，避免空白时误判为没有数据
+- 为技能表格增加“显示只读”筛选 checkbox，默认只展示可管理技能；同时把加载提示改成独立提示块，即使列表为空也能明确看到正在读取运行时技能清单
+- 修正所有二次确认按钮点击后不自动关闭的问题：Agents 与 Plugins 页的 `n-popconfirm` 改为受控 `show` 状态，确认后先收起弹层，再执行异步操作
+- Agents 页面补充 per-agent `tools` 配置，支持直接编辑 `agents.list[].tools.profile / allow / deny`，按 Agent 粒度限制工具集合
+- 移除技能管理页中的技能安装入口，页面职责收敛为查看、启用/禁用和系统技能 allowlist；技能安装统一放到 Agents 页按 agent 处理
+- 恢复技能管理页中的安装入口，但改成“先选择 Agent，再安装 skill”，统一复用 per-agent 安装接口，避免再出现全局 workspace 安装语义不清的问题
+- 继续对齐技能管理页与 Agents 页：选择 Agent 后，技能页现在会展示与 Agents 页一致的“技能能力”区，包括 resolved workspace、skills 目录、禁用目录和该 Agent 的本地 skills 列表，并支持直接删除
+- 将技能安装入口进一步移动到“工作区技能”tab 内，并把工作区技能查询语义收敛为“当前所选 Agent 的 workspace”，让选择 Agent、查看本地 skills、查询说明和安装动作落在同一处
+- 调整 Agents 页面新增入口位置：将“新增 Agent”从顶部默认设置区移动到 Agent 详情列表后方，保持“先看现有 Agent，再追加新 Agent”的顺序
+- 移除 Agents 页面中的“技能能力”区，避免和技能管理页的 Agent 维度技能入口重复；Agent 页面现仅保留配置项与 session 管理
+- 为 Agents 页面补充底部保存入口：在 Agent 详情列表后方与“新增 Agent”并排放置“保存 Agent 配置”，避免编辑详情后还要回到顶部保存
+- 为每个 Agent 详情卡片补充就近保存按钮，复用整页保存逻辑，避免编辑单个 Agent 后缺少明显的提交入口
+- 调整 Agents 页面底部操作与 session 按钮间距：移除“新增 Agent”旁边的保存按钮，仅保留每张 Agent 卡片内的保存入口；同时拉开 `清空Session` 与上方说明区的间距
+- 为每个 Agent 卡片底部保存区补充顶部分割线，和上方的配置分区保持同一视觉节奏
+- 继续增强 Agent 卡片底部保存区的独立感：增加与 Session 区的垂直间距，并提升分割线对比度，避免视觉上仍像 Session 区的一部分
+- 为 Agents 页面保存按钮补充“脏状态”判断：未编辑时禁用，只有默认设置或 Agent 详情发生变更后才可点击保存
+- 修复新建 / 复制 Agent 时输入即失焦的问题：为未保存 Agent 生成稳定的本地 `sourceId`，避免 `v-for key` 随 `Agent ID` 输入变化而触发整卡重建
+- 将 Agent 的 `Tools Profile` 从自由输入改成固定下拉，并在后端保存链路补充合法值校验，只允许 `minimal / coding / messaging / full`
+- 修正 Agents 配置与 OpenClaw 当前 schema 的兼容性：前后端不再读写 `agents.list[*].enabled`，并移除页面里的“启用/停用”开关与摘要，避免再次生成非法配置
+
+### 当前状态
+
+- roadmap 第 1 项已从“仅记录方案”进入实际实现阶段
+- 当前已完成“多个模型条目 + 默认模型”这一步，尚未扩展到主模型 / 备用模型 / 其他用途分组
+- 保留服务探测增强方案：在原有 `managed + process-scan` 之外，补充 `systemd` / `launchctl` 探测，并将 `detectedBy` / `managerName` 回传到服务状态接口

@@ -1,6 +1,7 @@
 export const APP_NAME = 'manclaw'
 
 export type ServiceStatus = 'running' | 'stopped' | 'degraded' | 'unknown'
+export type ServiceDetectionSource = 'managed' | 'process-scan' | 'systemd' | 'launchctl'
 export type LogLevel = 'info' | 'warn' | 'error'
 export type RiskLevel = 'low' | 'medium' | 'high'
 export type ShellExecutionStatus = 'running' | 'completed' | 'failed'
@@ -34,7 +35,8 @@ export interface ServiceDetail extends ServiceSummary {
   configPath?: string
   healthUrl?: string
   healthStatus?: 'passing' | 'failing' | 'disabled'
-  detectedBy?: 'managed' | 'process-scan'
+  detectedBy?: ServiceDetectionSource
+  managerName?: string
 }
 
 export interface HealthSnapshot {
@@ -77,15 +79,74 @@ export interface RestartNoticeDocument {
   updatedAt: string
 }
 
+export interface OpenClawPluginEntry {
+  id: string
+  name: string
+  description: string
+  version?: string
+  source: string
+  origin?: string
+  enabled: boolean
+  status: string
+  toolNames: string[]
+  hookNames: string[]
+  channelIds: string[]
+  providerIds: string[]
+  gatewayMethods: string[]
+  cliCommands: string[]
+  services: string[]
+  commands: string[]
+  httpRoutes: number
+  hookCount: number
+  configSchema: boolean
+  error?: string
+}
+
+export interface OpenClawPluginsDocument {
+  workspaceDir?: string
+  loadedCount: number
+  totalCount: number
+  items: OpenClawPluginEntry[]
+}
+
+export interface PluginMutationResult {
+  pluginId: string
+  action: 'enable' | 'disable'
+  output: string
+}
+
+export interface FeishuToolsConfig {
+  doc: boolean
+  chat: boolean
+  wiki: boolean
+  drive: boolean
+  perm: boolean
+  scopes: boolean
+  bitable: boolean
+}
+
+export interface FeishuToolsConfigDocument {
+  path: string
+  updatedAt: string
+  defaults: FeishuToolsConfig
+  current: FeishuToolsConfig
+}
+
 export type QuickModelProvider = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'ollama' | 'custom-openai'
 
-export interface QuickModelConfig {
+export interface QuickModelEntry {
+  id: string
   provider: QuickModelProvider
   model: string
   apiKey?: string
   baseUrl?: string
   customProviderId?: string
   envVarName?: string
+}
+
+export interface QuickModelConfigPayload {
+  defaultModelId: string
+  entries: QuickModelEntry[]
 }
 
 export interface QuickModelConfigDocument {
@@ -96,7 +157,66 @@ export interface QuickModelConfigDocument {
     supportsBaseUrl: boolean
     supportsCustomProviderId: boolean
   }>
-  current: QuickModelConfig
+  defaultModelId: string
+  entries: QuickModelEntry[]
+}
+
+export interface AgentChannelOption {
+  id: string
+  label: string
+}
+
+export interface AgentBindingEntry {
+  id: string
+  channel: string
+  accountId?: string
+}
+
+export interface AgentDefaultsConfig {
+  workspace: string
+  modelPrimary: string
+  compactionMode: string
+}
+
+export type AgentToolsProfile = 'minimal' | 'coding' | 'messaging' | 'full'
+
+export interface AgentToolsConfig {
+  profile?: AgentToolsProfile
+  allow: string[]
+  deny: string[]
+}
+
+export interface AgentConfigEntry {
+  sourceId: string
+  id: string
+  bindings: AgentBindingEntry[]
+  workspace?: string
+  modelPrimary?: string
+  compactionMode?: string
+  tools?: AgentToolsConfig
+  resolvedWorkspace?: string
+  skillsDir?: string
+  disabledSkillsDir?: string
+  workspaceSkills?: AgentWorkspaceSkillEntry[]
+  sessionStorePath?: string
+  sessionCount?: number
+  transcriptFileCount?: number
+}
+
+export interface AgentConfigPayload {
+  defaultAgentId: string
+  defaults: AgentDefaultsConfig
+  items: AgentConfigEntry[]
+}
+
+export interface AgentConfigDocument extends AgentConfigPayload {
+  availableChannels: AgentChannelOption[]
+}
+
+export interface AgentWorkspaceSkillEntry {
+  slug: string
+  state: InstalledSkillState
+  path: string
 }
 
 export interface RecommendedSkill {
@@ -115,6 +235,10 @@ export interface SkillsCatalogDocument {
   items: RecommendedSkill[]
 }
 
+export interface SkillsConfigDocument {
+  allowBundled: string[]
+}
+
 export interface SkillInstallItemResult {
   slug: string
   ok: boolean
@@ -130,21 +254,38 @@ export interface SkillInstallResult {
 
 export type InstalledSkillState = 'installed' | 'disabled'
 
+export interface InstalledSkillMissingRequirements {
+  bins: string[]
+  anyBins: string[]
+  env: string[]
+  config: string[]
+  os: string[]
+}
+
 export interface InstalledSkillEntry {
   slug: string
   title: string
   summary: string
   state: InstalledSkillState
-  path: string
+  path?: string
   version?: string
   registry?: string
   installedAt?: string
+  source?: string
+  bundled?: boolean
+  eligible?: boolean
+  blockedByAllowlist?: boolean
+  manageable?: boolean
+  toggleManageable?: boolean
+  managementMode?: 'workspace' | 'config'
+  missing?: InstalledSkillMissingRequirements
 }
 
 export interface InstalledSkillsDocument {
   workspaceDir: string
   installDir: string
   disabledDir: string
+  managedSkillsDir?: string
   items: InstalledSkillEntry[]
 }
 

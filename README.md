@@ -256,7 +256,7 @@ curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/instal
     "cwd": ".",
     "env": {},
     "autoStart": true,
-    "processName": "openclaw",
+    "processName": "openclaw-gateway",
     "configPath": "./openclaw.config.json",
     "configFlag": "--config",
     "healthcheck": {

@@ -8,9 +8,16 @@ import process from 'node:process'
 import { promisify } from 'node:util'
 
 import type {
+  AgentConfigDocument,
+  AgentConfigEntry,
+  AgentConfigPayload,
+  AgentToolsProfile,
+  AgentWorkspaceSkillEntry,
   ConfigDocument,
   ConfigRevision,
   ConfigValidationResult,
+  FeishuToolsConfig,
+  FeishuToolsConfigDocument,
   HealthSnapshot,
   InstalledSkillEntry,
   InstalledSkillsDocument,
@@ -18,14 +25,20 @@ import type {
   LogLevel,
   ManClawConfig,
   ManagerSettingsDocument,
-  QuickModelConfig,
+  OpenClawPluginEntry,
+  OpenClawPluginsDocument,
+  PluginMutationResult,
+  QuickModelConfigPayload,
   QuickModelConfigDocument,
+  QuickModelEntry,
   QuickModelProvider,
   RecommendedSkill,
   RegistrySkillDetail,
   RestartNoticeDocument,
   ServiceDetail,
+  ServiceDetectionSource,
   ServiceSummary,
+  SkillsConfigDocument,
   SkillMutationResult,
   SkillInstallResult,
   ShellAllowedCommand,
@@ -44,7 +57,7 @@ const DEFAULT_CONFIG: ManClawConfig = {
     env: {},
     autoStart: true,
     autoRestart: true,
-    processName: 'openclaw',
+    processName: 'openclaw-gateway',
     configPath: './openclaw.config.json',
     configFlag: '',
     healthcheck: {
@@ -87,7 +100,8 @@ interface DetectedProcess {
   pid: number
   command: string
   args: string
-  detectedBy: 'managed' | 'process-scan'
+  detectedBy: ServiceDetectionSource
+  managerName?: string
 }
 
 function tokenizeProcessArgs(args: string): string[] {
@@ -97,15 +111,64 @@ function tokenizeProcessArgs(args: string): string[] {
     .filter(Boolean)
 }
 
-function matchesProcessSignature(commandName: string, args: string, command: string, processName: string): boolean {
-  const commandBaseName = path.basename(command)
+function createProcessNameCandidates(command: string, processName: string, serviceArgs: string[] = []): string[] {
+  const candidates = new Set<string>()
+  const commandBaseName = path.basename(command).trim()
+  const normalizedProcessName = processName.trim()
+  const primaryArg = serviceArgs[0]?.trim()
+
+  if (normalizedProcessName) {
+    candidates.add(normalizedProcessName)
+  }
+
+  if (commandBaseName) {
+    candidates.add(commandBaseName)
+  }
+
+  if (primaryArg) {
+    if (normalizedProcessName) {
+      candidates.add(`${normalizedProcessName}-${primaryArg}`)
+    }
+
+    if (commandBaseName) {
+      candidates.add(`${commandBaseName}-${primaryArg}`)
+    }
+  }
+
+  return Array.from(candidates)
+}
+
+function matchesProcessSignature(commandName: string, args: string, command: string, processName: string, serviceArgs: string[] = []): boolean {
+  const candidates = createProcessNameCandidates(command, processName, serviceArgs)
   const tokens = tokenizeProcessArgs(args)
 
-  if (commandName === processName || commandName === commandBaseName) {
+  if (candidates.includes(commandName)) {
     return true
   }
 
-  return tokens.some((token) => token === command || token === commandBaseName || token === processName)
+  return tokens.some((token) => token === command || candidates.includes(token))
+}
+
+function createServiceManagerCandidates(command: string, processName: string, serviceArgs: string[] = []): string[] {
+  const values = createProcessNameCandidates(command, processName, serviceArgs)
+  const candidates = new Set<string>()
+
+  for (const value of values) {
+    const normalized = value.trim()
+    if (!normalized) {
+      continue
+    }
+
+    candidates.add(normalized)
+    candidates.add(`${normalized}.service`)
+  }
+
+  return Array.from(candidates)
+}
+
+function parseInteger(value: string): number | undefined {
+  const parsed = Number(value.trim())
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
 interface HealthProbeResult {
@@ -177,6 +240,16 @@ const RECOMMENDED_SKILLS: Array<Omit<RecommendedSkill, 'installed'>> = [
   },
 ]
 
+const DEFAULT_FEISHU_TOOLS_CONFIG: FeishuToolsConfig = {
+  doc: true,
+  chat: true,
+  wiki: true,
+  drive: true,
+  perm: false,
+  scopes: true,
+  bitable: true,
+}
+
 function getClawhubExecArgs(workspaceDir: string, action: 'install' | 'update', slug: string, force = false): string[] {
   const args = [
     'exec',
@@ -208,6 +281,9 @@ function formatExternalCommandError(error: unknown, fallback: string): string {
 
   const commandError = error as Error & { code?: string; stderr?: string; stdout?: string }
   if (commandError.code === 'ENOENT') {
+    if (/openclaw/i.test(fallback)) {
+      return '系统未找到 openclaw 命令。请先安装 openclaw，并确认它已加入 PATH，或在接入设置中填写正确的命令路径。'
+    }
     return '系统未找到 npm 命令。请先安装 Node.js/npm，并确认 npm 已加入 PATH。'
   }
 
@@ -274,12 +350,131 @@ function defaultEnvVarForProvider(provider: QuickModelProvider): string | undefi
   }
 }
 
-function normalizeProcessName(command: string, processName?: string): string {
+function isKnownQuickModelProvider(providerId: string): providerId is Exclude<QuickModelProvider, 'custom-openai'> {
+  return providerId === 'openai' || providerId === 'anthropic' || providerId === 'google' || providerId === 'openrouter' || providerId === 'ollama'
+}
+
+function createModelEntryId(providerId: string, model: string, index: number): string {
+  const providerSegment = providerId.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-')
+  const modelSegment = model.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-')
+  return `${providerSegment || 'model'}-${modelSegment || 'entry'}-${index + 1}`
+}
+
+function resolveQuickModelProviderKey(entry: {
+  provider: QuickModelProvider
+  customProviderId?: string
+}): string {
+  return entry.provider === 'custom-openai' ? entry.customProviderId?.trim() || 'custom-openai' : entry.provider
+}
+
+function createQuickModelRef(providerKey: string, model: string): string {
+  return `${providerKey}/${model.trim()}`
+}
+
+function createAgentSourceId(agentId: string, index: number): string {
+  const normalizedId = agentId.trim() || 'agent'
+  return `${normalizedId}::${index + 1}`
+}
+
+function createAgentBindingId(agentId: string, index: number): string {
+  const normalizedId = agentId.trim() || 'binding'
+  return `${normalizedId}::binding::${index + 1}`
+}
+
+function normalizeAgentChannels(channels: string[]): string[] {
+  return Array.from(
+    new Set(
+      channels
+        .map((channel) => channel.trim())
+        .filter(Boolean),
+    ),
+  )
+}
+
+function normalizeAgentBindings(
+  agentId: string,
+  bindings: Array<{
+    id?: string
+    channel?: string
+    accountId?: string
+  }>,
+): Array<{
+  id: string
+  channel: string
+  accountId?: string
+}> {
+  const seen = new Set<string>()
+
+  return bindings
+    .map((binding, index) => {
+      const channel = binding.channel?.trim() ?? ''
+      const accountId = binding.accountId?.trim() || undefined
+      const id = binding.id?.trim() || createAgentBindingId(agentId, index)
+      return {
+        id,
+        channel,
+        accountId,
+      }
+    })
+    .filter((binding) => {
+      if (!binding.channel) {
+        return false
+      }
+
+      const key = `${binding.channel}::${binding.accountId ?? ''}`
+      if (seen.has(key)) {
+        return false
+      }
+
+      seen.add(key)
+      return true
+    })
+}
+
+function readStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? Array.from(
+        new Set(
+          value
+            .map((item) => (typeof item === 'string' ? item.trim() : ''))
+            .filter(Boolean),
+        ),
+      )
+    : []
+}
+
+const AGENT_TOOLS_PROFILE_VALUES = new Set(['minimal', 'coding', 'messaging', 'full'])
+
+function readAgentToolsProfile(value: unknown): AgentToolsProfile | undefined {
+  const profile = readString(value)
+  if (!profile || !AGENT_TOOLS_PROFILE_VALUES.has(profile)) {
+    return undefined
+  }
+
+  return profile as AgentToolsProfile
+}
+
+function parseJsonObjectFromMixedOutput<T>(output: string): T {
+  const startIndex = output.indexOf('{')
+  if (startIndex < 0) {
+    throw new Error('Command did not return JSON output.')
+  }
+
+  return JSON.parse(output.slice(startIndex)) as T
+}
+
+function normalizeProcessName(command: string, processName?: string, serviceArgs: string[] = []): string {
   if (processName && processName.trim()) {
     return processName.trim()
   }
 
-  return path.basename(command).trim()
+  const commandBaseName = path.basename(command).trim()
+  const primaryArg = serviceArgs[0]?.trim()
+  if (commandBaseName && primaryArg) {
+    return `${commandBaseName}-${primaryArg}`
+  }
+
+  return commandBaseName
 }
 
 function summarizeCommandOutput(text: string): string {
@@ -396,8 +591,18 @@ function buildServiceArgs(service: ManClawConfig['service']): string[] {
 function buildServiceEnv(service: ManClawConfig['service']): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    ...service.env,
   }
+
+  delete env.http_proxy
+  delete env.https_proxy
+  delete env.all_proxy
+  delete env.no_proxy
+  delete env.HTTP_PROXY
+  delete env.HTTPS_PROXY
+  delete env.ALL_PROXY
+  delete env.NO_PROXY
+
+  Object.assign(env, service.env)
 
   if (service.configPath && !service.configFlag) {
     env.OPENCLAW_CONFIG_PATH = service.configPath
@@ -504,7 +709,11 @@ function normalizeConfig(candidate: unknown): ManClawConfig {
       env: env as Record<string, string>,
       autoStart: Boolean(service.autoStart),
       autoRestart: typeof service.autoRestart === 'boolean' ? service.autoRestart : true,
-      processName: normalizeProcessName(service.command, typeof service.processName === 'string' ? service.processName : undefined),
+      processName: normalizeProcessName(
+        service.command,
+        typeof service.processName === 'string' ? service.processName : undefined,
+        service.args,
+      ),
       configPath: typeof service.configPath === 'string' ? service.configPath : '',
       configFlag: typeof service.configFlag === 'string' ? service.configFlag : '',
       healthcheck: {
@@ -629,7 +838,9 @@ export class ManClawManager {
             ? `Process detected but health check failed: ${health.message}`
             : health.status === 'passing'
               ? `Process detected and health check passed: ${health.message}`
-              : `Process detected by ${runningProcess.detectedBy}.`,
+              : runningProcess.managerName
+                ? `Process detected by ${runningProcess.detectedBy} (${runningProcess.managerName}).`
+                : `Process detected by ${runningProcess.detectedBy}.`,
         command: config.service.command,
         args,
         cwd,
@@ -638,6 +849,7 @@ export class ManClawManager {
         healthUrl: config.service.healthcheck.url,
         healthStatus: health.status,
         detectedBy: runningProcess.detectedBy,
+        managerName: runningProcess.managerName,
         startedAt: runningProcess.detectedBy === 'managed' ? current.startedAt : undefined,
       }
     }
@@ -652,6 +864,8 @@ export class ManClawManager {
       configPath: config.service.configPath,
       healthUrl: config.service.healthcheck.url,
       healthStatus: runningProcess ? health.status : 'disabled',
+      detectedBy: runningProcess?.detectedBy,
+      managerName: runningProcess?.managerName,
     }
   }
 
@@ -826,26 +1040,378 @@ export class ManClawManager {
   async getQuickModelConfig(): Promise<QuickModelConfigDocument> {
     const document = await this.getCurrentConfig()
     const config = JSON.parse(document.content) as Record<string, unknown>
+    const current = this.extractQuickModelConfig(config)
     return {
       availableProviders: QUICK_MODEL_PROVIDERS,
-      current: this.extractQuickModelConfig(config),
+      defaultModelId: current.defaultModelId,
+      entries: current.entries,
     }
   }
 
-  async saveQuickModelConfig(candidate: QuickModelConfig): Promise<ConfigDocument> {
-    const provider = candidate.provider
-    const model = candidate.model.trim()
-    if (!provider) {
-      throw new Error('Provider is required.')
+  async getAgentConfig(): Promise<AgentConfigDocument> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    return this.extractAgentConfig(config)
+  }
+
+  async saveAgentConfig(candidate: AgentConfigPayload): Promise<AgentConfigDocument> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    const nextConfig = this.applyAgentConfig(config, candidate)
+    await this.saveConfig(`${JSON.stringify(nextConfig, null, 2)}\n`, `Agent setup: ${candidate.defaultAgentId.trim()}`)
+    return this.getAgentConfig()
+  }
+
+  async clearAgentSessions(agentId: string): Promise<{ agentId: string; storePath: string; clearedFiles: number }> {
+    const normalizedAgentId = agentId.trim()
+    if (!normalizedAgentId) {
+      throw new Error('Agent id is required.')
     }
-    if (!model) {
-      throw new Error('Model is required.')
+
+    const sessionStore = await this.getAgentSessionStoreInfo(normalizedAgentId)
+    const sessionDir = path.dirname(sessionStore.path)
+    if (!(await fileExists(sessionDir))) {
+      throw new Error(`Session directory was not found for agent ${normalizedAgentId}.`)
+    }
+
+    const entries = await readdir(sessionDir, { withFileTypes: true })
+    const filesToDelete = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => path.join(sessionDir, entry.name))
+
+    await Promise.all(filesToDelete.map((targetPath) => rm(targetPath, { force: true })))
+    await this.appendAuditLog(`agents.sessions.clear agent=${normalizedAgentId} files=${filesToDelete.length}`)
+    await this.appendRuntimeLog('warn', `agent sessions cleared: agent=${normalizedAgentId} files=${filesToDelete.length}`)
+
+    return {
+      agentId: normalizedAgentId,
+      storePath: sessionStore.path,
+      clearedFiles: filesToDelete.length,
+    }
+  }
+
+  async installAgentSkill(agentId: string, slug: string, force = false, skipInspect = false): Promise<SkillMutationResult> {
+    const normalizedAgentId = agentId.trim()
+    const normalizedSlug = slug.trim()
+    if (!normalizedAgentId) {
+      throw new Error('Agent id is required.')
+    }
+    if (!normalizedSlug) {
+      throw new Error('Skill slug is required.')
+    }
+    if (!skipInspect) {
+      const detail = await this.inspectSkill(normalizedSlug)
+      if (detail.malwareBlocked) {
+        throw new Error(`Skill ${normalizedSlug} is blocked as malicious and cannot be installed.`)
+      }
+      if (detail.suspicious && !force) {
+        throw new Error('This skill is flagged as suspicious. Confirm and force install to continue.')
+      }
+    }
+
+    const workspaceDir = await this.resolveWorkspaceDirForAgent(normalizedAgentId)
+    const installPath = path.join(workspaceDir, 'skills', normalizedSlug)
+    if (!force && (await fileExists(installPath))) {
+      return {
+        slug: normalizedSlug,
+        state: 'installed',
+        message: '已安装到该 Agent workspace，无需重复安装。',
+      }
+    }
+
+    try {
+      const { stdout, stderr } = await execFileAsync('npm', getClawhubExecArgs(workspaceDir, 'install', normalizedSlug, force), {
+        cwd: this.rootDir,
+        timeout: 60 * 1000,
+        maxBuffer: 1024 * 1024 * 8,
+        env: process.env,
+      })
+      const message = summarizeCommandOutput(stdout || stderr)
+      await this.appendAuditLog(`agents.skills.install agent=${normalizedAgentId} slug=${normalizedSlug} status=completed`)
+      await this.appendRuntimeLog('info', `agent skill installed: agent=${normalizedAgentId} slug=${normalizedSlug} (${message})`)
+      return {
+        slug: normalizedSlug,
+        state: 'installed',
+        message,
+      }
+    } catch (error) {
+      const message = formatExternalCommandError(error, 'Agent skill install failed.')
+      await this.appendAuditLog(`agents.skills.install agent=${normalizedAgentId} slug=${normalizedSlug} status=failed`)
+      await this.appendRuntimeLog('error', `agent skill install failed: agent=${normalizedAgentId} slug=${normalizedSlug} (${message})`)
+      throw new Error(message)
+    }
+  }
+
+  async deleteAgentSkill(agentId: string, slug: string): Promise<SkillMutationResult> {
+    const normalizedAgentId = agentId.trim()
+    const normalizedSlug = slug.trim()
+    if (!normalizedAgentId) {
+      throw new Error('Agent id is required.')
+    }
+    if (!normalizedSlug) {
+      throw new Error('Skill slug is required.')
+    }
+
+    const workspaceDir = await this.resolveWorkspaceDirForAgent(normalizedAgentId)
+    const variants = await this.findSkillPathVariants(workspaceDir, normalizedSlug)
+
+    if (variants.length === 0) {
+      throw new Error(`Skill ${normalizedSlug} was not found in agent ${normalizedAgentId} workspace.`)
+    }
+
+    for (const targetPath of variants) {
+      await rm(targetPath, { recursive: true, force: true })
+    }
+
+    await this.removeSkillFromLockfile(workspaceDir, normalizedSlug, { caseInsensitive: true })
+    await this.appendAuditLog(`agents.skills.delete agent=${normalizedAgentId} slug=${normalizedSlug}`)
+    await this.appendRuntimeLog('warn', `agent skill deleted: agent=${normalizedAgentId} slug=${normalizedSlug}`)
+    return {
+      slug: normalizedSlug,
+      state: 'removed',
+      message:
+        variants.length > 1
+          ? `已从 agent ${normalizedAgentId} 删除 ${variants.length} 个同名技能变体：${variants.map((item) => path.basename(item)).join(', ')}。`
+          : `已从 agent ${normalizedAgentId} 的 workspace 删除技能。`,
+    }
+  }
+
+  async saveQuickModelConfig(candidate: QuickModelConfigPayload): Promise<ConfigDocument> {
+    if (!candidate.defaultModelId.trim()) {
+      throw new Error('Default model is required.')
+    }
+    if (!Array.isArray(candidate.entries) || candidate.entries.length === 0) {
+      throw new Error('At least one model entry is required.')
     }
 
     const document = await this.getCurrentConfig()
     const config = JSON.parse(document.content) as Record<string, unknown>
+    this.assertRemovedModelsAreNotReferencedElsewhere(config, candidate)
     const nextConfig = this.applyQuickModelConfig(config, candidate)
-    return this.saveConfig(`${JSON.stringify(nextConfig, null, 2)}\n`, `Quick model setup: ${provider}/${model}`)
+    const defaultEntry = candidate.entries.find((entry) => entry.id === candidate.defaultModelId)
+    const commentTarget = defaultEntry ? `${defaultEntry.provider}/${defaultEntry.model.trim()}` : candidate.defaultModelId
+    return this.saveConfig(`${JSON.stringify(nextConfig, null, 2)}\n`, `Quick model setup: ${commentTarget}`)
+  }
+
+  async getOpenClawPlugins(): Promise<OpenClawPluginsDocument> {
+    const config = await this.readConfigModel()
+    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const command = config.service.command.trim() || 'openclaw'
+
+    try {
+      const { stdout, stderr } = await execFileAsync(command, ['plugins', 'list', '--json'], {
+        cwd: workspaceDir,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024 * 16,
+        env: process.env,
+      })
+      const payload = parseJsonObjectFromMixedOutput<{
+        workspaceDir?: string
+        plugins?: Array<{
+          id?: string
+          name?: string
+          description?: string
+          version?: string
+          source?: string
+          origin?: string
+          enabled?: boolean
+          status?: string
+          toolNames?: string[]
+          hookNames?: string[]
+          channelIds?: string[]
+          providerIds?: string[]
+          gatewayMethods?: string[]
+          cliCommands?: string[]
+          services?: string[]
+          commands?: string[]
+          httpRoutes?: number
+          hookCount?: number
+          configSchema?: boolean
+          error?: string
+        }>
+      }>(stdout || stderr)
+
+      const items: OpenClawPluginEntry[] = (payload.plugins ?? []).map((plugin) => ({
+        id: plugin.id ?? 'unknown',
+        name: plugin.name ?? plugin.id ?? 'unknown',
+        description: plugin.description ?? '',
+        version: plugin.version,
+        source: plugin.source ?? '',
+        origin: plugin.origin,
+        enabled: Boolean(plugin.enabled),
+        status: plugin.status ?? 'unknown',
+        toolNames: Array.isArray(plugin.toolNames) ? plugin.toolNames : [],
+        hookNames: Array.isArray(plugin.hookNames) ? plugin.hookNames : [],
+        channelIds: Array.isArray(plugin.channelIds) ? plugin.channelIds : [],
+        providerIds: Array.isArray(plugin.providerIds) ? plugin.providerIds : [],
+        gatewayMethods: Array.isArray(plugin.gatewayMethods) ? plugin.gatewayMethods : [],
+        cliCommands: Array.isArray(plugin.cliCommands) ? plugin.cliCommands : [],
+        services: Array.isArray(plugin.services) ? plugin.services : [],
+        commands: Array.isArray(plugin.commands) ? plugin.commands : [],
+        httpRoutes: typeof plugin.httpRoutes === 'number' ? plugin.httpRoutes : 0,
+        hookCount: typeof plugin.hookCount === 'number' ? plugin.hookCount : 0,
+        configSchema: Boolean(plugin.configSchema),
+        error: plugin.error,
+      }))
+
+      return {
+        workspaceDir: payload.workspaceDir ?? workspaceDir,
+        loadedCount: items.filter((item) => item.status === 'loaded').length,
+        totalCount: items.length,
+        items,
+      }
+    } catch (error) {
+      throw new Error(formatExternalCommandError(error, 'OpenClaw plugins list failed.'))
+    }
+  }
+
+  async getOpenClawPlugin(pluginId: string): Promise<OpenClawPluginEntry> {
+    const normalizedPluginId = pluginId.trim()
+    if (!normalizedPluginId) {
+      throw new Error('Plugin id is required.')
+    }
+
+    const config = await this.readConfigModel()
+    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const command = config.service.command.trim() || 'openclaw'
+
+    try {
+      const { stdout, stderr } = await execFileAsync(command, ['plugins', 'info', normalizedPluginId, '--json'], {
+        cwd: workspaceDir,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024 * 16,
+        env: process.env,
+      })
+      const plugin = parseJsonObjectFromMixedOutput<{
+        id?: string
+        name?: string
+        description?: string
+        version?: string
+        source?: string
+        origin?: string
+        enabled?: boolean
+        status?: string
+        toolNames?: string[]
+        hookNames?: string[]
+        channelIds?: string[]
+        providerIds?: string[]
+        gatewayMethods?: string[]
+        cliCommands?: string[]
+        services?: string[]
+        commands?: string[]
+        httpRoutes?: number
+        hookCount?: number
+        configSchema?: boolean
+        error?: string
+      }>(stdout || stderr)
+
+      return {
+        id: plugin.id ?? normalizedPluginId,
+        name: plugin.name ?? plugin.id ?? normalizedPluginId,
+        description: plugin.description ?? '',
+        version: plugin.version,
+        source: plugin.source ?? '',
+        origin: plugin.origin,
+        enabled: Boolean(plugin.enabled),
+        status: plugin.status ?? 'unknown',
+        toolNames: Array.isArray(plugin.toolNames) ? plugin.toolNames : [],
+        hookNames: Array.isArray(plugin.hookNames) ? plugin.hookNames : [],
+        channelIds: Array.isArray(plugin.channelIds) ? plugin.channelIds : [],
+        providerIds: Array.isArray(plugin.providerIds) ? plugin.providerIds : [],
+        gatewayMethods: Array.isArray(plugin.gatewayMethods) ? plugin.gatewayMethods : [],
+        cliCommands: Array.isArray(plugin.cliCommands) ? plugin.cliCommands : [],
+        services: Array.isArray(plugin.services) ? plugin.services : [],
+        commands: Array.isArray(plugin.commands) ? plugin.commands : [],
+        httpRoutes: typeof plugin.httpRoutes === 'number' ? plugin.httpRoutes : 0,
+        hookCount: typeof plugin.hookCount === 'number' ? plugin.hookCount : 0,
+        configSchema: Boolean(plugin.configSchema),
+        error: plugin.error,
+      }
+    } catch (error) {
+      throw new Error(formatExternalCommandError(error, `OpenClaw plugin info failed for ${normalizedPluginId}.`))
+    }
+  }
+
+  async getFeishuToolsConfig(): Promise<FeishuToolsConfigDocument> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    const channels = asRecord(config.channels)
+    const feishu = asRecord(channels.feishu)
+    const tools = asRecord(feishu.tools)
+
+    return {
+      path: document.path,
+      updatedAt: document.updatedAt,
+      defaults: structuredClone(DEFAULT_FEISHU_TOOLS_CONFIG),
+      current: {
+        doc: typeof tools.doc === 'boolean' ? tools.doc : DEFAULT_FEISHU_TOOLS_CONFIG.doc,
+        chat: typeof tools.chat === 'boolean' ? tools.chat : DEFAULT_FEISHU_TOOLS_CONFIG.chat,
+        wiki: typeof tools.wiki === 'boolean' ? tools.wiki : DEFAULT_FEISHU_TOOLS_CONFIG.wiki,
+        drive: typeof tools.drive === 'boolean' ? tools.drive : DEFAULT_FEISHU_TOOLS_CONFIG.drive,
+        perm: typeof tools.perm === 'boolean' ? tools.perm : DEFAULT_FEISHU_TOOLS_CONFIG.perm,
+        scopes: typeof tools.scopes === 'boolean' ? tools.scopes : DEFAULT_FEISHU_TOOLS_CONFIG.scopes,
+        bitable: typeof tools.bitable === 'boolean' ? tools.bitable : DEFAULT_FEISHU_TOOLS_CONFIG.bitable,
+      },
+    }
+  }
+
+  async saveFeishuToolsConfig(candidate: FeishuToolsConfig): Promise<ConfigDocument> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    const channels = asRecord(config.channels)
+    const feishu = asRecord(channels.feishu)
+
+    config.channels = channels
+    channels.feishu = feishu
+    feishu.tools = {
+      doc: Boolean(candidate.doc),
+      chat: Boolean(candidate.chat),
+      wiki: Boolean(candidate.wiki),
+      drive: Boolean(candidate.drive),
+      perm: Boolean(candidate.perm),
+      scopes: Boolean(candidate.scopes),
+      bitable: Boolean(candidate.bitable),
+    }
+
+    return this.saveConfig(`${JSON.stringify(config, null, 2)}\n`, 'Feishu tools setup')
+  }
+
+  async setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginMutationResult> {
+    const trimmedPluginId = pluginId.trim()
+    if (!trimmedPluginId) {
+      throw new Error('Plugin id is required.')
+    }
+
+    const config = await this.readConfigModel()
+    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const command = config.service.command.trim() || 'openclaw'
+    const action = enabled ? 'enable' : 'disable'
+
+    try {
+      const { stdout, stderr } = await execFileAsync(command, ['plugins', action, trimmedPluginId], {
+        cwd: workspaceDir,
+        timeout: Math.max(config.shell.timeoutMs, 120_000),
+        maxBuffer: 1024 * 1024 * 16,
+        env: process.env,
+      })
+
+      const output = summarizeCommandOutput(`${stdout}${stderr}`)
+      await this.appendAuditLog(`plugins.${action} id=${JSON.stringify(trimmedPluginId)} status=completed`)
+      await this.appendRuntimeLog('info', `plugin ${action} completed: ${trimmedPluginId}`)
+      return {
+        pluginId: trimmedPluginId,
+        action,
+        output,
+      }
+    } catch (error) {
+      const commandError = error as Error & { stdout?: string; stderr?: string }
+      const stdout = typeof commandError.stdout === 'string' ? commandError.stdout : ''
+      const stderr = typeof commandError.stderr === 'string' ? commandError.stderr : ''
+      const message = summarizeCommandOutput(`${stdout}${stderr}`) || (error instanceof Error ? error.message : `Plugin ${action} failed.`)
+      await this.appendAuditLog(`plugins.${action} id=${JSON.stringify(trimmedPluginId)} status=failed message=${JSON.stringify(message)}`)
+      await this.appendRuntimeLog('error', `plugin ${action} failed: ${trimmedPluginId}`)
+      throw new Error(message)
+    }
   }
 
   async getRecommendedSkillsCatalog(): Promise<SkillsCatalogDocument> {
@@ -865,20 +1431,148 @@ export class ManClawManager {
     }
   }
 
+  async getSkillsConfig(): Promise<SkillsConfigDocument> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    const skills = asRecord(config.skills)
+    const allowBundled = Array.isArray(skills.allowBundled)
+      ? Array.from(
+          new Set(
+            skills.allowBundled
+              .filter((item): item is string => typeof item === 'string')
+              .map((item) => item.trim())
+              .filter(Boolean),
+          ),
+        )
+      : []
+
+    return {
+      allowBundled,
+    }
+  }
+
+  async saveSkillsConfig(candidate: SkillsConfigDocument): Promise<SkillsConfigDocument> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    const skills = asRecord(config.skills)
+    const normalizedAllowBundled = Array.from(
+      new Set(
+        candidate.allowBundled
+          .filter((item) => typeof item === 'string')
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    )
+
+    config.skills = skills
+    skills.allowBundled = normalizedAllowBundled
+
+    await this.saveConfig(`${JSON.stringify(config, null, 2)}\n`, 'Skills allowBundled setup')
+    return {
+      allowBundled: normalizedAllowBundled,
+    }
+  }
+
   async getInstalledSkills(): Promise<InstalledSkillsDocument> {
     const config = await this.readConfigModel()
     const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
     const installDir = path.join(workspaceDir, 'skills')
     const disabledDir = path.join(workspaceDir, '.manclaw-disabled-skills')
+    const command = config.service.command.trim() || 'openclaw'
+    const managedEntries = [
+      ...(await this.readSkillEntries(installDir, 'installed')),
+      ...(await this.readSkillEntries(disabledDir, 'disabled')),
+    ]
+    const managedEntriesBySlug = new Map(managedEntries.map((item) => [item.slug, item]))
 
-    return {
-      workspaceDir,
-      installDir,
-      disabledDir,
-      items: [
-        ...(await this.readSkillEntries(installDir, 'installed')),
-        ...(await this.readSkillEntries(disabledDir, 'disabled')),
-      ].sort((left, right) => left.slug.localeCompare(right.slug)),
+    try {
+      const { stdout, stderr } = await execFileAsync(command, ['skills', 'list', '--json'], {
+        cwd: workspaceDir,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024 * 16,
+        env: process.env,
+      })
+      const payload = parseJsonObjectFromMixedOutput<{
+        workspaceDir?: string
+        managedSkillsDir?: string
+        skills?: Array<{
+          name?: string
+          description?: string
+          eligible?: boolean
+          disabled?: boolean
+          blockedByAllowlist?: boolean
+          source?: string
+          bundled?: boolean
+          missing?: {
+            bins?: string[]
+            anyBins?: string[]
+            env?: string[]
+            config?: string[]
+            os?: string[]
+          }
+        }>
+      }>(stdout || stderr)
+
+      const runtimeItems = (payload.skills ?? [])
+        .filter((skill) => typeof skill.name === 'string' && skill.name.trim() !== '')
+        .map((skill) => {
+          const slug = skill.name!.trim()
+          const managed = managedEntriesBySlug.get(slug)
+
+          managedEntriesBySlug.delete(slug)
+
+          return {
+            slug,
+            title: managed?.title ?? slug,
+            summary: managed?.summary ?? skill.description ?? 'No description.',
+            state: skill.disabled ? 'disabled' : 'installed',
+            path: managed?.path,
+            version: managed?.version,
+            registry: managed?.registry,
+            installedAt: managed?.installedAt,
+            source: skill.source ?? managed?.registry,
+            bundled: Boolean(skill.bundled),
+            eligible: Boolean(skill.eligible),
+            blockedByAllowlist: Boolean(skill.blockedByAllowlist),
+            manageable: Boolean(managed),
+            toggleManageable: true,
+            managementMode: managed ? 'workspace' : 'config',
+            missing: {
+              bins: Array.isArray(skill.missing?.bins) ? skill.missing.bins : [],
+              anyBins: Array.isArray(skill.missing?.anyBins) ? skill.missing.anyBins : [],
+              env: Array.isArray(skill.missing?.env) ? skill.missing.env : [],
+              config: Array.isArray(skill.missing?.config) ? skill.missing.config : [],
+              os: Array.isArray(skill.missing?.os) ? skill.missing.os : [],
+            },
+          } satisfies InstalledSkillEntry
+        })
+
+      const localOnlyItems = Array.from(managedEntriesBySlug.values()).map((item) => ({
+        ...item,
+        manageable: true,
+        toggleManageable: true,
+        managementMode: 'workspace' as const,
+      }))
+
+      return {
+        workspaceDir: payload.workspaceDir ?? workspaceDir,
+        installDir,
+        disabledDir,
+        managedSkillsDir: payload.managedSkillsDir,
+        items: [...runtimeItems, ...localOnlyItems].sort((left, right) => left.slug.localeCompare(right.slug)),
+      }
+    } catch {
+      return {
+        workspaceDir,
+        installDir,
+        disabledDir,
+        items: managedEntries
+          .map((item) => ({
+            ...item,
+            manageable: true,
+          }))
+          .sort((left, right) => left.slug.localeCompare(right.slug)),
+      }
     }
   }
 
@@ -993,6 +1687,23 @@ export class ManClawManager {
   }
 
   async disableSkill(slug: string): Promise<SkillMutationResult> {
+    const installedSkills = await this.getInstalledSkills()
+    const targetSkill = installedSkills.items.find((item) => item.slug === slug)
+    if (!targetSkill) {
+      throw new Error(`Skill ${slug} was not found.`)
+    }
+
+    if (!targetSkill.manageable && targetSkill.toggleManageable) {
+      await this.setSkillEnabledInConfig(slug, false)
+      await this.appendAuditLog(`skills.disable slug=${slug} mode=config`)
+      await this.appendRuntimeLog('warn', `skill disabled via config: ${slug}`)
+      return {
+        slug,
+        state: 'disabled',
+        message: 'Skill disabled via openclaw.json `skills.entries`.',
+      }
+    }
+
     const config = await this.readConfigModel()
     const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
     const sourceDir = path.join(workspaceDir, 'skills', slug)
@@ -1019,6 +1730,23 @@ export class ManClawManager {
   }
 
   async enableSkill(slug: string): Promise<SkillMutationResult> {
+    const installedSkills = await this.getInstalledSkills()
+    const targetSkill = installedSkills.items.find((item) => item.slug === slug)
+    if (!targetSkill) {
+      throw new Error(`Skill ${slug} was not found.`)
+    }
+
+    if (!targetSkill.manageable && targetSkill.toggleManageable) {
+      await this.setSkillEnabledInConfig(slug, true)
+      await this.appendAuditLog(`skills.enable slug=${slug} mode=config`)
+      await this.appendRuntimeLog('info', `skill enabled via config: ${slug}`)
+      return {
+        slug,
+        state: 'installed',
+        message: 'Skill enabled via openclaw.json `skills.entries`.',
+      }
+    }
+
     const config = await this.readConfigModel()
     const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
     const disabledDir = path.join(workspaceDir, '.manclaw-disabled-skills', slug)
@@ -1216,18 +1944,7 @@ export class ManClawManager {
 
     const config = await this.readConfigModel()
     const targetPath = this.resolveServiceConfigPath(config)
-
-    const revisionId = new Date().toISOString().replace(/[-:.TZ]/g, '')
-    const revisionFile: ConfigRevisionFile = {
-      id: revisionId,
-      createdAt: nowIso(),
-      comment,
-      content,
-    }
-
-    if (await fileExists(targetPath)) {
-      await writeFile(path.join(this.paths.revisionsDir, `${revisionId}.json`), `${JSON.stringify(revisionFile, null, 2)}\n`, 'utf8')
-    }
+    const revisionId = await this.createConfigRevisionSnapshot(targetPath, comment)
 
     await writeFile(targetPath, content.endsWith('\n') ? content : `${content}\n`, 'utf8')
     await this.appendAuditLog(`config.save revision=${revisionId}${comment ? ` comment=${comment}` : ''}`)
@@ -1261,11 +1978,39 @@ export class ManClawManager {
     const config = await this.readConfigModel()
     const targetPath = this.resolveServiceConfigPath(config)
     const revision = await readJsonFile<ConfigRevisionFile>(revisionPath)
+    const backupRevisionId = await this.createConfigRevisionSnapshot(targetPath, `Before rollback to ${revisionId}`)
     await writeFile(targetPath, revision.content.endsWith('\n') ? revision.content : `${revision.content}\n`, 'utf8')
-    await this.appendAuditLog(`config.rollback revision=${revisionId}`)
+    await this.appendAuditLog(`config.rollback revision=${revisionId} backup=${backupRevisionId}`)
     await this.appendRuntimeLog('warn', `service configuration rolled back to ${revisionId}`)
 
     return this.getCurrentConfig()
+  }
+
+  async undoLastConfigChange(): Promise<ConfigDocument> {
+    const [latestRevision] = await this.getConfigRevisions()
+    if (!latestRevision) {
+      throw new Error('No config revision available to undo.')
+    }
+
+    return this.rollbackConfig(latestRevision.id)
+  }
+
+  private async createConfigRevisionSnapshot(targetPath: string, comment?: string): Promise<string> {
+    const revisionId = new Date().toISOString().replace(/[-:.TZ]/g, '')
+
+    if (!(await fileExists(targetPath))) {
+      return revisionId
+    }
+
+    const revisionFile: ConfigRevisionFile = {
+      id: revisionId,
+      createdAt: nowIso(),
+      comment,
+      content: await readFile(targetPath, 'utf8'),
+    }
+
+    await writeFile(path.join(this.paths.revisionsDir, `${revisionId}.json`), `${JSON.stringify(revisionFile, null, 2)}\n`, 'utf8')
+    return revisionId
   }
 
   async getRuntimeLogs(limit = 100): Promise<LogEntry[]> {
@@ -1417,6 +2162,53 @@ export class ManClawManager {
     return this.executions.get(executionId)
   }
 
+  async executePluginInstallCommand(command: string): Promise<ShellExecutionRecord> {
+    const trimmedCommand = command.trim()
+    if (!trimmedCommand) {
+      throw new Error('Plugin install command is required.')
+    }
+
+    const config = await this.readConfigModel()
+    const cwd = path.resolve(this.rootDir, config.service.cwd)
+    const record: ShellExecutionRecord = {
+      id: randomUUID(),
+      commandId: 'plugins.install-custom',
+      status: 'running',
+      startedAt: nowIso(),
+      output: '',
+    }
+
+    this.executions.set(record.id, record)
+
+    try {
+      const { stdout, stderr } = await execFileAsync('bash', ['-lc', trimmedCommand], {
+        cwd,
+        env: process.env,
+        timeout: Math.max(config.shell.timeoutMs, 120_000),
+        maxBuffer: 1024 * 1024 * 16,
+      })
+
+      record.status = 'completed'
+      record.completedAt = nowIso()
+      record.exitCode = 0
+      record.output = `${stdout}${stderr}`.trim() || 'Command completed with no output.'
+      await this.appendAuditLog(`plugins.install-command status=completed command=${JSON.stringify(trimmedCommand)}`)
+      await this.appendRuntimeLog('info', `plugin install command completed: ${trimmedCommand}`)
+      return record
+    } catch (error) {
+      record.status = 'failed'
+      record.completedAt = nowIso()
+      const commandError = error as Error & { stdout?: string; stderr?: string; code?: string }
+      record.exitCode = typeof commandError.code === 'number' ? commandError.code : 1
+      const stdout = typeof commandError.stdout === 'string' ? commandError.stdout : ''
+      const stderr = typeof commandError.stderr === 'string' ? commandError.stderr : ''
+      record.output = `${stdout}${stderr}`.trim() || (error instanceof Error ? error.message : 'Plugin install command failed.')
+      await this.appendAuditLog(`plugins.install-command status=failed command=${JSON.stringify(trimmedCommand)} message=${JSON.stringify(record.output)}`)
+      await this.appendRuntimeLog('error', `plugin install command failed: ${trimmedCommand}`)
+      return record
+    }
+  }
+
   private async readConfigModel(): Promise<ManClawConfig> {
     return normalizeConfig(await readJsonFile<ManClawConfig>(this.paths.configPath))
   }
@@ -1451,6 +2243,7 @@ export class ManClawManager {
           args: discovered.args?.length ? discovered.args : config.service.args,
           cwd: discovered.configPath ? await this.deriveWorkspaceFromConfigPath(discovered.configPath, config.service.cwd) : config.service.cwd,
           configPath: discovered.configPath ?? config.service.configPath,
+          processName: normalizeProcessName('openclaw', config.service.processName, discovered.args ?? config.service.args),
           healthcheck: {
             ...config.service.healthcheck,
             url: discovered.healthUrl ?? config.service.healthcheck.url,
@@ -1477,6 +2270,52 @@ export class ManClawManager {
     } catch {
       return fallbackCwd
     }
+  }
+
+  private async getAgentSessionStoreInfo(agentId: string): Promise<{ path: string; count: number }> {
+    const config = await this.readConfigModel()
+    const command = config.service.command.trim() || 'openclaw'
+
+    try {
+      const { stdout, stderr } = await execFileAsync(command, ['sessions', '--agent', agentId, '--json'], {
+        cwd: this.rootDir,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024 * 8,
+        env: process.env,
+      })
+      const payload = parseJsonObjectFromMixedOutput<{
+        path?: string
+        count?: number
+      }>(stdout || stderr)
+      const storePath = readString(payload.path)
+      if (!storePath) {
+        throw new Error('Session store path was not returned.')
+      }
+
+      return {
+        path: storePath,
+        count: typeof payload.count === 'number' ? payload.count : 0,
+      }
+    } catch (error) {
+      throw new Error(formatExternalCommandError(error, `Failed to query sessions for agent ${agentId}.`))
+    }
+  }
+
+  private resolveWorkspacePath(workspace: string): string {
+    return path.isAbsolute(workspace) ? workspace : path.resolve(this.rootDir, workspace)
+  }
+
+  private async resolveWorkspaceDirForAgent(agentId: string): Promise<string> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    const agentConfig = this.extractAgentConfigBase(config)
+    const target = agentConfig.items.find((item) => item.id === agentId)
+
+    if (!target) {
+      throw new Error(`Agent ${agentId} was not found.`)
+    }
+
+    return this.resolveWorkspacePath(target.workspace?.trim() || agentConfig.defaults.workspace)
   }
 
   private async readInstalledSkillSlugs(workspaceDir: string): Promise<Set<string>> {
@@ -1507,6 +2346,33 @@ export class ManClawManager {
     }
 
     return installed
+  }
+
+  private async readAgentWorkspaceSkillEntries(workspaceDir: string): Promise<AgentWorkspaceSkillEntry[]> {
+    const installedDir = path.join(workspaceDir, 'skills')
+    const disabledDir = path.join(workspaceDir, '.manclaw-disabled-skills')
+    const [installedEntries, disabledEntries] = await Promise.all([
+      this.readSkillEntries(installedDir, 'installed'),
+      this.readSkillEntries(disabledDir, 'disabled'),
+    ])
+
+    return [...installedEntries, ...disabledEntries]
+      .map((entry) => ({
+        slug: entry.slug,
+        state: entry.state,
+        path: entry.path ?? '',
+      }))
+      .sort((left, right) => left.slug.localeCompare(right.slug))
+  }
+
+  private async countAgentTranscriptFiles(storePath: string): Promise<number> {
+    const sessionDir = path.dirname(storePath)
+    if (!(await fileExists(sessionDir))) {
+      return 0
+    }
+
+    const entries = await readdir(sessionDir, { withFileTypes: true })
+    return entries.filter((entry) => entry.isFile() && entry.name !== path.basename(storePath)).length
   }
 
   private async readSkillEntries(rootDir: string, state: InstalledSkillEntry['state']): Promise<InstalledSkillEntry[]> {
@@ -1624,6 +2490,26 @@ export class ManClawManager {
     }
   }
 
+  private async setSkillEnabledInConfig(slug: string, enabled: boolean): Promise<void> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    const skills = asRecord(config.skills)
+    const entries = asRecord(skills.entries)
+    const currentEntry = asRecord(entries[slug])
+
+    config.skills = skills
+    skills.entries = entries
+    entries[slug] = {
+      ...currentEntry,
+      enabled,
+    }
+
+    await this.saveConfig(
+      `${JSON.stringify(config, null, 2)}\n`,
+      `${enabled ? 'Enable' : 'Disable'} skill via config: ${slug}`,
+    )
+  }
+
   private resolveServiceConfigPath(config: ManClawConfig): string {
     const targetPath = config.service.configPath.trim()
     if (!targetPath) {
@@ -1637,108 +2523,613 @@ export class ManClawManager {
     return path.resolve(this.rootDir, targetPath)
   }
 
-  private extractQuickModelConfig(config: Record<string, unknown>): QuickModelConfig {
+  private extractQuickModelConfig(config: Record<string, unknown>): QuickModelConfigPayload {
     const agents = asRecord(config.agents)
     const defaults = asRecord(agents.defaults)
     const modelConfig = asRecord(defaults.model)
     const primary = readString(modelConfig.primary) ?? 'openai/gpt-5.2'
     const separatorIndex = primary.indexOf('/')
-    const providerId = separatorIndex >= 0 ? primary.slice(0, separatorIndex) : 'openai'
-    const model = separatorIndex >= 0 ? primary.slice(separatorIndex + 1) : primary
+    const defaultProviderId = separatorIndex >= 0 ? primary.slice(0, separatorIndex) : 'openai'
+    const defaultModel = separatorIndex >= 0 ? primary.slice(separatorIndex + 1) : primary
     const env = asRecord(config.env)
     const models = asRecord(config.models)
     const providers = asRecord(models.providers)
-    const customProvider = asRecord(providers[providerId])
+    const entries: QuickModelEntry[] = []
+    let defaultModelId = ''
 
-    if (providerId === 'openai' || providerId === 'anthropic' || providerId === 'google' || providerId === 'openrouter') {
-      const envVarName = defaultEnvVarForProvider(providerId)
-      return {
-        provider: providerId,
-        model,
-        envVarName,
-        apiKey: envVarName ? readString(env[envVarName]) : undefined,
+    const pushEntry = (
+      providerId: string,
+      providerConfig: Record<string, unknown>,
+      model: string,
+      index: number,
+    ): void => {
+      const trimmedModel = model.trim()
+      if (!trimmedModel) {
+        return
+      }
+
+      const providerType: QuickModelProvider = isKnownQuickModelProvider(providerId) ? providerId : 'custom-openai'
+      const apiKeyPlaceholder = readString(providerConfig.apiKey)
+      const resolvedEnvVarName =
+        providerType === 'custom-openai'
+          ? apiKeyPlaceholder?.match(/^\$\{(.+)\}$/)?.[1]
+          : defaultEnvVarForProvider(providerType)
+      const entry: QuickModelEntry = {
+        id: createModelEntryId(providerId, trimmedModel, entries.length + index),
+        provider: providerType,
+        model: trimmedModel,
+      }
+
+      if (providerType === 'custom-openai') {
+        entry.customProviderId = providerId
+        entry.baseUrl = readString(providerConfig.baseUrl)
+      }
+      if (resolvedEnvVarName) {
+        entry.envVarName = resolvedEnvVarName
+        entry.apiKey = readString(env[resolvedEnvVarName])
+      }
+
+      entries.push(entry)
+      if (providerId === defaultProviderId && trimmedModel === defaultModel && !defaultModelId) {
+        defaultModelId = entry.id
       }
     }
 
-    if (providerId === 'ollama') {
-      return {
-        provider: 'ollama',
-        model,
+    for (const [providerId, rawProviderConfig] of Object.entries(providers)) {
+      const providerConfig = asRecord(rawProviderConfig)
+      const providerModels = Array.isArray(providerConfig.models) ? providerConfig.models : []
+
+      if (providerModels.length > 0) {
+        providerModels.forEach((item, index) => {
+          const modelRecord = asRecord(item)
+          const model = readString(modelRecord.id) ?? readString(modelRecord.name)
+          if (model) {
+            pushEntry(providerId, providerConfig, model, index)
+          }
+        })
+        continue
+      }
+
+      if (providerId === defaultProviderId) {
+        pushEntry(providerId, providerConfig, defaultModel, 0)
       }
     }
 
-    const apiKeyPlaceholder = readString(customProvider.apiKey)
-    const envVarName = apiKeyPlaceholder?.match(/^\$\{(.+)\}$/)?.[1]
+    if (entries.length === 0) {
+      pushEntry(defaultProviderId, asRecord(providers[defaultProviderId]), defaultModel, 0)
+    }
+
+    if (!defaultModelId) {
+      const fallbackIndex = entries.findIndex((entry) => {
+        const providerId = entry.provider === 'custom-openai' ? entry.customProviderId?.trim() : entry.provider
+        return providerId === defaultProviderId && entry.model === defaultModel
+      })
+      defaultModelId = entries[fallbackIndex >= 0 ? fallbackIndex : 0]?.id ?? ''
+    }
+
     return {
-      provider: 'custom-openai',
-      model,
-      customProviderId: providerId,
-      baseUrl: readString(customProvider.baseUrl),
-      envVarName,
-      apiKey: envVarName ? readString(env[envVarName]) : undefined,
+      defaultModelId,
+      entries,
     }
   }
 
-  private applyQuickModelConfig(config: Record<string, unknown>, candidate: QuickModelConfig): Record<string, unknown> {
+  private async extractAgentConfig(config: Record<string, unknown>): Promise<AgentConfigDocument> {
+    const base = this.extractAgentConfigBase(config)
+    const items = await Promise.all(
+      base.items.map(async (item) => {
+        const resolvedWorkspace = this.resolveWorkspacePath(item.workspace?.trim() || base.defaults.workspace)
+        const skillsDir = path.join(resolvedWorkspace, 'skills')
+        const disabledSkillsDir = path.join(resolvedWorkspace, '.manclaw-disabled-skills')
+        const sessionStore = await this.getAgentSessionStoreInfo(item.id).catch(() => undefined)
+        const transcriptFileCount = sessionStore ? await this.countAgentTranscriptFiles(sessionStore.path).catch(() => undefined) : undefined
+        return {
+          ...item,
+          resolvedWorkspace,
+          skillsDir,
+          disabledSkillsDir,
+          workspaceSkills: await this.readAgentWorkspaceSkillEntries(resolvedWorkspace),
+          sessionStorePath: sessionStore?.path,
+          sessionCount: sessionStore?.count,
+          transcriptFileCount,
+        }
+      }),
+    )
+
+    return {
+      ...base,
+      items,
+    }
+  }
+
+  private extractAgentConfigBase(config: Record<string, unknown>): AgentConfigDocument {
+    const agents = asRecord(config.agents)
+    const defaults = asRecord(agents.defaults)
+    const defaultModel = asRecord(defaults.model)
+    const defaultCompaction = asRecord(defaults.compaction)
+    const list = Array.isArray(agents.list) ? agents.list : []
+    const bindings = Array.isArray(config.bindings) ? config.bindings : []
+    const channelOptions = new Set<string>(Object.keys(asRecord(config.channels)).map((channelId) => channelId.trim()).filter(Boolean))
+
+    const items: AgentConfigEntry[] = list.map((entry, index) => {
+      const agent = asRecord(entry)
+      const agentId = readString(agent.id) ?? `agent-${index + 1}`
+      const model = asRecord(agent.model)
+      const compaction = asRecord(agent.compaction)
+      const tools = asRecord(agent.tools)
+      const agentBindings = bindings.flatMap((binding, bindingIndex) => {
+        const bindingRecord = asRecord(binding)
+        if (readString(bindingRecord.agentId) !== agentId) {
+          return []
+        }
+
+        const match = asRecord(bindingRecord.match)
+        const channelId = readString(match.channel)
+        if (!channelId) {
+          return []
+        }
+
+        return [
+          {
+            id: createAgentBindingId(agentId, bindingIndex),
+            channel: channelId,
+            accountId: readString(match.accountId),
+          },
+        ]
+      })
+
+      agentBindings.forEach((binding) => channelOptions.add(binding.channel))
+
+      return {
+        sourceId: createAgentSourceId(agentId, index),
+        id: agentId,
+        bindings: normalizeAgentBindings(agentId, agentBindings),
+        workspace: readString(agent.workspace),
+        modelPrimary: readString(model.primary),
+        compactionMode: readString(compaction.mode),
+        tools: {
+          profile: readAgentToolsProfile(tools.profile),
+          allow: readStringList(tools.allow),
+          deny: readStringList(tools.deny),
+        },
+      }
+    })
+
+    if (items.length === 0) {
+      items.push({
+        sourceId: createAgentSourceId('main', 0),
+        id: 'main',
+        bindings: [],
+        tools: {
+          allow: [],
+          deny: [],
+        },
+      })
+    }
+
+    return {
+      defaultAgentId: items[0]?.id ?? '',
+      defaults: {
+        workspace: readString(defaults.workspace) ?? '',
+        modelPrimary: readString(defaultModel.primary) ?? '',
+        compactionMode: readString(defaultCompaction.mode) ?? '',
+      },
+      availableChannels: Array.from(channelOptions)
+        .sort()
+        .map((channelId) => ({
+          id: channelId,
+          label: channelId,
+        })),
+      items,
+    }
+  }
+
+  private applyQuickModelConfig(config: Record<string, unknown>, candidate: QuickModelConfigPayload): Record<string, unknown> {
     const nextConfig = structuredClone(config)
     const agents = asRecord(nextConfig.agents)
     const defaults = asRecord(agents.defaults)
     const modelConfig = asRecord(defaults.model)
     const env = asRecord(nextConfig.env)
+    const models = asRecord(nextConfig.models)
+    const existingProviders = asRecord(models.providers)
 
     nextConfig.agents = agents
     agents.defaults = defaults
     defaults.model = modelConfig
     nextConfig.env = env
+    nextConfig.models = models
+    models.mode = 'merge'
 
-    if (candidate.provider === 'ollama') {
-      modelConfig.primary = `ollama/${candidate.model.trim()}`
-      return nextConfig
+    interface NormalizedQuickModelEntry extends QuickModelEntry {
+      providerKey: string
+      apiKey?: string
+      baseUrl?: string
+      customProviderId?: string
+      envVarName?: string
     }
 
-    if (candidate.provider === 'custom-openai') {
-      const providerId = candidate.customProviderId?.trim()
-      const baseUrl = candidate.baseUrl?.trim()
-      const envVarName = candidate.envVarName?.trim() || defaultEnvVarForProvider('custom-openai')
-      if (!providerId) {
-        throw new Error('Custom provider ID is required.')
-      }
-      if (!baseUrl) {
-        throw new Error('Base URL is required for custom providers.')
-      }
-      if (!envVarName) {
-        throw new Error('Environment variable name is required for custom providers.')
-      }
-      if (!candidate.apiKey?.trim()) {
-        throw new Error('API key is required for custom providers.')
+    const normalizedEntries: NormalizedQuickModelEntry[] = candidate.entries.map((entry, index) => {
+      const model = entry.model.trim()
+      if (!model) {
+        throw new Error(`Model is required for entry #${index + 1}.`)
       }
 
-      const models = asRecord(nextConfig.models)
-      const providers = asRecord(models.providers)
-      nextConfig.models = models
-      models.mode = 'merge'
-      models.providers = providers
-      providers[providerId] = {
-        baseUrl,
-        apiKey: toEnvPlaceholder(envVarName),
-        api: 'openai-completions',
-        models: [{ id: candidate.model.trim(), name: candidate.model.trim() }],
+      if (entry.provider === 'custom-openai') {
+        const providerId = entry.customProviderId?.trim()
+        const baseUrl = entry.baseUrl?.trim()
+        const envVarName = entry.envVarName?.trim() || defaultEnvVarForProvider('custom-openai')
+        const apiKey = entry.apiKey?.trim()
+        if (!providerId) {
+          throw new Error(`Custom provider ID is required for entry #${index + 1}.`)
+        }
+        if (!baseUrl) {
+          throw new Error(`Base URL is required for entry #${index + 1}.`)
+        }
+        if (!envVarName) {
+          throw new Error(`Environment variable name is required for entry #${index + 1}.`)
+        }
+        if (!apiKey) {
+          throw new Error(`API key is required for entry #${index + 1}.`)
+        }
+
+        return {
+          ...entry,
+          model,
+          customProviderId: providerId,
+          baseUrl,
+          envVarName,
+          apiKey,
+          providerKey: providerId,
+        }
       }
-      env[envVarName] = candidate.apiKey.trim()
-      modelConfig.primary = `${providerId}/${candidate.model.trim()}`
-      return nextConfig
+
+      if (entry.provider !== 'ollama') {
+        const envVarName = defaultEnvVarForProvider(entry.provider)
+        const apiKey = entry.apiKey?.trim()
+        if (!envVarName) {
+          throw new Error(`Unsupported provider: ${entry.provider}`)
+        }
+        if (!apiKey) {
+          throw new Error(`API key is required for entry #${index + 1}.`)
+        }
+
+        return {
+          ...entry,
+          model,
+          envVarName,
+          apiKey,
+          providerKey: entry.provider,
+        }
+      }
+
+      return {
+        ...entry,
+        model,
+        providerKey: entry.provider,
+      }
+    })
+
+    const defaultEntry = normalizedEntries.find((entry) => entry.id === candidate.defaultModelId)
+    if (!defaultEntry) {
+      throw new Error('Default model must point to an existing entry.')
     }
 
-    const envVarName = defaultEnvVarForProvider(candidate.provider)
-    if (!envVarName) {
-      throw new Error(`Unsupported provider: ${candidate.provider}`)
+    const nextProviders: Record<string, Record<string, unknown>> = {}
+    const entriesByProvider = new Map<string, NormalizedQuickModelEntry[]>()
+
+    for (const entry of normalizedEntries) {
+      const items = entriesByProvider.get(entry.providerKey) ?? []
+      items.push(entry)
+      entriesByProvider.set(entry.providerKey, items)
     }
-    if (!candidate.apiKey?.trim()) {
-      throw new Error('API key is required.')
+
+    for (const [providerKey, providerEntries] of entriesByProvider) {
+      const currentProvider: Record<string, unknown> = {
+        ...structuredClone(asRecord(existingProviders[providerKey])),
+      }
+      const uniqueModelIds = Array.from(new Set(providerEntries.map((entry) => entry.model)))
+      currentProvider.models = uniqueModelIds.map((modelId) => ({ id: modelId, name: modelId }))
+
+      const firstEntry = providerEntries[0]
+      if (firstEntry.provider === 'custom-openai') {
+        const envVarName = firstEntry.envVarName
+        const baseUrl = firstEntry.baseUrl
+        const apiKey = firstEntry.apiKey
+        if (!envVarName || !baseUrl || !apiKey) {
+          throw new Error(`Custom provider ${providerKey} is missing required settings.`)
+        }
+
+        for (const entry of providerEntries) {
+          if (entry.baseUrl !== baseUrl || entry.envVarName !== envVarName || entry.apiKey !== apiKey) {
+            throw new Error(`Custom provider ${providerKey} has inconsistent settings across entries.`)
+          }
+        }
+
+        const existingApi = readString(currentProvider.api)
+        currentProvider.baseUrl = baseUrl
+        currentProvider.apiKey = toEnvPlaceholder(envVarName)
+        currentProvider.api = existingApi || 'openai-completions'
+        env[envVarName] = apiKey
+      } else if (firstEntry.provider !== 'ollama' && firstEntry.envVarName) {
+        env[firstEntry.envVarName] = firstEntry.apiKey
+      }
+
+      nextProviders[providerKey] = currentProvider
     }
-    env[envVarName] = candidate.apiKey.trim()
-    modelConfig.primary = `${candidate.provider}/${candidate.model.trim()}`
+
+    models.providers = nextProviders
+    modelConfig.primary = `${defaultEntry.providerKey}/${defaultEntry.model}`
     return nextConfig
+  }
+
+  private applyAgentConfig(config: Record<string, unknown>, candidate: AgentConfigPayload): Record<string, unknown> {
+    const defaultAgentId = candidate.defaultAgentId.trim()
+    if (!defaultAgentId) {
+      throw new Error('Default agent is required.')
+    }
+    if (!Array.isArray(candidate.items) || candidate.items.length === 0) {
+      throw new Error('At least one agent is required.')
+    }
+
+    const nextConfig = structuredClone(config)
+    const agents = asRecord(nextConfig.agents)
+    const defaults = asRecord(agents.defaults)
+    const defaultModel = asRecord(defaults.model)
+    const defaultCompaction = asRecord(defaults.compaction)
+    const currentList = Array.isArray(agents.list) ? agents.list : []
+    const currentDocument = this.extractAgentConfigBase(config)
+    const rawBySourceId = new Map<string, Record<string, unknown>>(
+      currentDocument.items.map((item, index) => [item.sourceId, asRecord(currentList[index])]),
+    )
+    const rawById = new Map<string, Record<string, unknown>>(
+      currentDocument.items.map((item, index) => [item.id, asRecord(currentList[index])]),
+    )
+
+    const seenIds = new Set<string>()
+    const normalizedItems = candidate.items.map((item, index) => {
+      const agentId = item.id.trim()
+      if (!agentId) {
+        throw new Error(`Agent ID is required for item #${index + 1}.`)
+      }
+      if (seenIds.has(agentId)) {
+        throw new Error(`Agent ID "${agentId}" is duplicated.`)
+      }
+
+      const toolsProfile = item.tools?.profile?.trim()
+      if (toolsProfile && !AGENT_TOOLS_PROFILE_VALUES.has(toolsProfile)) {
+        throw new Error(`Tools profile "${toolsProfile}" is invalid for agent "${agentId}".`)
+      }
+
+      const normalizedBindings = normalizeAgentBindings(
+        agentId,
+        Array.isArray(item.bindings)
+          ? item.bindings
+          : Array.isArray((item as { channels?: string[] }).channels)
+            ? normalizeAgentChannels((item as { channels?: string[] }).channels ?? []).map((channel, bindingIndex) => ({
+                id: createAgentBindingId(agentId, bindingIndex),
+                channel,
+              }))
+            : [],
+      )
+
+      seenIds.add(agentId)
+      return {
+        sourceId: item.sourceId.trim(),
+        id: agentId,
+        bindings: normalizedBindings,
+        workspace: item.workspace?.trim(),
+        modelPrimary: item.modelPrimary?.trim(),
+        compactionMode: item.compactionMode?.trim(),
+        toolsProfile,
+        toolsAllow: readStringList(item.tools?.allow),
+        toolsDeny: readStringList(item.tools?.deny),
+      }
+    })
+
+    if (!normalizedItems.some((item) => item.id === defaultAgentId)) {
+      throw new Error('Default agent must point to an existing item.')
+    }
+
+    const defaultWorkspace = candidate.defaults.workspace.trim()
+    const defaultModelPrimary = candidate.defaults.modelPrimary.trim()
+    if (!defaultWorkspace) {
+      throw new Error('Default workspace is required.')
+    }
+    if (!defaultModelPrimary) {
+      throw new Error('Default model is required.')
+    }
+
+    const orderedItems = [
+      ...normalizedItems.filter((item) => item.id === defaultAgentId),
+      ...normalizedItems.filter((item) => item.id !== defaultAgentId),
+    ]
+
+    nextConfig.agents = agents
+    agents.defaults = defaults
+    defaults.model = defaultModel
+    defaults.compaction = defaultCompaction
+    defaults.workspace = defaultWorkspace
+    defaultModel.primary = defaultModelPrimary
+
+    const defaultCompactionMode = candidate.defaults.compactionMode.trim()
+    if (defaultCompactionMode) {
+      defaultCompaction.mode = defaultCompactionMode
+    } else {
+      delete defaultCompaction.mode
+      if (Object.keys(defaultCompaction).length === 0) {
+        delete defaults.compaction
+      }
+    }
+
+    agents.list = orderedItems.map((item) => {
+      const nextAgent = structuredClone(rawBySourceId.get(item.sourceId) ?? rawById.get(item.sourceId) ?? rawById.get(item.id) ?? {})
+      const nextModel = asRecord(nextAgent.model)
+      const nextCompaction = asRecord(nextAgent.compaction)
+      const nextTools = asRecord(nextAgent.tools)
+
+      nextAgent.id = item.id
+      delete nextAgent.enabled
+
+      if (item.workspace) {
+        nextAgent.workspace = item.workspace
+      } else {
+        delete nextAgent.workspace
+      }
+
+      if (item.modelPrimary) {
+        nextModel.primary = item.modelPrimary
+        nextAgent.model = nextModel
+      } else {
+        delete nextModel.primary
+        if (Object.keys(nextModel).length > 0) {
+          nextAgent.model = nextModel
+        } else {
+          delete nextAgent.model
+        }
+      }
+
+      if (item.compactionMode) {
+        nextCompaction.mode = item.compactionMode
+        nextAgent.compaction = nextCompaction
+      } else {
+        delete nextCompaction.mode
+        if (Object.keys(nextCompaction).length > 0) {
+          nextAgent.compaction = nextCompaction
+        } else {
+          delete nextAgent.compaction
+        }
+      }
+
+      if (item.toolsProfile) {
+        nextTools.profile = item.toolsProfile
+      } else {
+        delete nextTools.profile
+      }
+
+      if (item.toolsAllow.length > 0) {
+        nextTools.allow = item.toolsAllow
+      } else {
+        delete nextTools.allow
+      }
+
+      if (item.toolsDeny.length > 0) {
+        nextTools.deny = item.toolsDeny
+      } else {
+        delete nextTools.deny
+      }
+
+      if (Object.keys(nextTools).length > 0) {
+        nextAgent.tools = nextTools
+      } else {
+        delete nextAgent.tools
+      }
+
+      return nextAgent
+    })
+
+    const managedAgentIds = new Set(currentDocument.items.map((item) => item.id))
+    const existingBindings = Array.isArray(nextConfig.bindings) ? nextConfig.bindings : []
+    const preservedBindings = existingBindings.filter((binding) => {
+      const bindingRecord = asRecord(binding)
+      const agentId = readString(bindingRecord.agentId)
+      const channelId = readString(asRecord(bindingRecord.match).channel)
+      return !agentId || !channelId || !managedAgentIds.has(agentId)
+    })
+
+    nextConfig.bindings = [
+      ...preservedBindings,
+      ...orderedItems.flatMap((item) =>
+        item.bindings.map((binding) => ({
+          agentId: item.id,
+          match: {
+            channel: binding.channel,
+            ...(binding.accountId ? { accountId: binding.accountId } : {}),
+          },
+        })),
+      ),
+    ]
+
+    return nextConfig
+  }
+
+  private assertRemovedModelsAreNotReferencedElsewhere(config: Record<string, unknown>, candidate: QuickModelConfigPayload): void {
+    const current = this.extractQuickModelConfig(config)
+    const nextEntries = candidate.entries
+      .map((entry) => ({
+        providerKey: resolveQuickModelProviderKey(entry),
+        model: entry.model.trim(),
+      }))
+      .filter((entry) => entry.model)
+    const nextRefs = new Set(nextEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.model)))
+    const remainingModelIds = new Set(nextEntries.map((entry) => entry.model))
+    const removedEntries = current.entries
+      .map((entry) => ({
+        providerKey: resolveQuickModelProviderKey(entry),
+        model: entry.model.trim(),
+      }))
+      .filter((entry) => entry.model)
+      .filter((entry) => !nextRefs.has(createQuickModelRef(entry.providerKey, entry.model)))
+
+    if (removedEntries.length === 0) {
+      return
+    }
+
+    const removedQualifiedRefs = new Set(removedEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.model)))
+    const removedRawModelIds = new Set(
+      removedEntries.filter((entry) => !remainingModelIds.has(entry.model)).map((entry) => entry.model),
+    )
+    const referencePaths: string[] = []
+
+    const visit = (value: unknown, currentPath: string): void => {
+      if (referencePaths.length >= 10) {
+        return
+      }
+
+      if (
+        currentPath === 'agents.defaults.model.primary' ||
+        currentPath.startsWith('models.providers.') ||
+        currentPath.startsWith('models.providers[')
+      ) {
+        return
+      }
+
+      if (typeof value === 'string') {
+        const normalized = value.trim()
+        if (!normalized) {
+          return
+        }
+
+        if (removedQualifiedRefs.has(normalized) || removedRawModelIds.has(normalized)) {
+          referencePaths.push(currentPath || '$')
+        }
+        return
+      }
+
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => visit(item, `${currentPath}[${index}]`))
+        return
+      }
+
+      if (value && typeof value === 'object') {
+        for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+          const nextPath = currentPath ? `${currentPath}.${key}` : key
+          visit(nested, nextPath)
+          if (referencePaths.length >= 10) {
+            return
+          }
+        }
+      }
+    }
+
+    visit(config, '')
+
+    if (referencePaths.length === 0) {
+      return
+    }
+
+    const removedLabels = removedEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.model))
+    throw new Error(
+      `以下模型仍被其他配置引用，无法删除：${removedLabels.join(', ')}。引用位置：${referencePaths.join(', ')}`,
+    )
   }
 
   private async findRunningProcess(config: ManClawConfig): Promise<DetectedProcess | undefined> {
@@ -1757,13 +3148,18 @@ export class ManClawManager {
       this.serviceState.child = undefined
     }
 
+    const processName = normalizeProcessName(config.service.command, config.service.processName, config.service.args)
+    const managerDetected = await this.findRunningProcessViaServiceManager(config, processName)
+    if (managerDetected) {
+      return managerDetected
+    }
+
     try {
       const { stdout } = await execFileAsync('ps', ['-eo', 'pid=,comm=,args='], {
         cwd: this.rootDir,
         timeout: config.shell.timeoutMs,
       })
 
-      const processName = normalizeProcessName(config.service.command, config.service.processName)
       for (const rawLine of stdout.split(/\r?\n/)) {
         const line = rawLine.trim()
         if (!line) {
@@ -1781,7 +3177,13 @@ export class ManClawManager {
           continue
         }
 
-        const sameCommand = matchesProcessSignature(commandName, args, config.service.command, processName)
+        const sameCommand = matchesProcessSignature(
+          commandName,
+          args,
+          config.service.command,
+          processName,
+          config.service.args,
+        )
 
         if (sameCommand) {
           return {
@@ -1794,6 +3196,91 @@ export class ManClawManager {
       }
     } catch (error) {
       await this.appendRuntimeLog('error', `process scan failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+    }
+
+    return undefined
+  }
+
+  private async findRunningProcessViaServiceManager(
+    config: ManClawConfig,
+    processName: string,
+  ): Promise<DetectedProcess | undefined> {
+    const candidates = createServiceManagerCandidates(config.service.command, processName, config.service.args)
+
+    if (process.platform === 'linux') {
+      for (const candidate of candidates) {
+        try {
+          const { stdout } = await execFileAsync(
+            'systemctl',
+            ['show', candidate, '--property=Id,MainPID,SubState,LoadState', '--value'],
+            {
+              cwd: this.rootDir,
+              timeout: config.shell.timeoutMs,
+            },
+          )
+
+          const lines = stdout
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+
+          const [unitId = candidate, mainPidText = '', subState = '', loadState = ''] = lines
+          const mainPid = parseInteger(mainPidText)
+          if (loadState === 'loaded' && mainPid && subState !== 'dead' && subState !== 'failed') {
+            return {
+              pid: mainPid,
+              command: unitId,
+              args: `systemd unit ${unitId}`,
+              detectedBy: 'systemd',
+              managerName: unitId,
+            }
+          }
+        } catch {
+          continue
+        }
+      }
+    }
+
+    if (process.platform === 'darwin') {
+      try {
+        const { stdout } = await execFileAsync('launchctl', ['list'], {
+          cwd: this.rootDir,
+          timeout: config.shell.timeoutMs,
+        })
+
+        for (const rawLine of stdout.split(/\r?\n/)) {
+          const line = rawLine.trim()
+          if (!line || line.startsWith('PID') || line.startsWith('-\t')) {
+            continue
+          }
+
+          const parts = line.split(/\s+/)
+          if (parts.length < 3) {
+            continue
+          }
+
+          const pid = parseInteger(parts[0])
+          const label = parts.slice(2).join(' ')
+          if (!pid) {
+            continue
+          }
+
+          const matches = candidates.some((candidate) => label === candidate || label.endsWith(`.${candidate}`))
+          if (!matches) {
+            continue
+          }
+
+          return {
+            pid,
+            command: label,
+            args: `launchctl service ${label}`,
+            detectedBy: 'launchctl',
+            managerName: label,
+          }
+        }
+      } catch {
+        return undefined
+      }
     }
 
     return undefined

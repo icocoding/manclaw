@@ -17,6 +17,9 @@
 
           <nav class="shell__nav">
             <RouterLink to="/">概览</RouterLink>
+            <RouterLink to="/models">模型</RouterLink>
+            <RouterLink to="/agents">Agents</RouterLink>
+            <RouterLink to="/plugins">插件</RouterLink>
             <RouterLink to="/skills">技能</RouterLink>
           </nav>
 

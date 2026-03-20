@@ -602,6 +602,19 @@ a {
   gap: 12px;
 }
 
+.nav-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 16px;
+  color: var(--accent-ink);
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
+  font-weight: 600;
+  box-shadow: 0 10px 24px rgba(221, 176, 107, 0.18);
+}
+
 .button-row > *,
 .shell-controls > * {
   min-width: 0;
