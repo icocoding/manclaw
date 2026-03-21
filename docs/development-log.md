@@ -4,6 +4,10 @@
 
 ### 已完成
 
+- 继续收口 `清空 Session` 的危险按钮样式：在全局变量覆盖之外，再直接对最终渲染的 `.n-button.danger-action` 背景色与交互态做强制覆盖，绕过 `Naive UI` 内部 token 合成，确保 `Harbor` 下也能看到明确变化
+- 将 `清空 Session` 改为项目内显式危险样式类 `danger-action`：不再仅依赖 `Naive UI` 的 `warning` 主题 token，而是通过全局 CSS 变量覆盖按钮自身的 `--n-color / --n-border / --n-text-color`，确保 `Forge / Harbor` 两套风格都稳定显示不同的不可撤回操作颜色
+- 补齐 `Harbor` 主题下的危险按钮覆盖：除了通用 `warningColor` 之外，再显式覆盖 `Button.colorWarning / borderWarning / textColorWarning` 等组件级 token，确保 `清空 Session` 在 `Harbor` 下也显示预期的琥珀警示色
+- 调整主题化危险操作配色：将 `Naive UI` 的 `warning` 按钮色纳入 `Forge / Harbor` 两套主题覆盖，`清空 Session` 这类不可撤回操作现在会随风格切换显示更明确的警示色，同时继续与主操作按钮区分
 - 调整“最佳实践 -> Session Cleanup”标题排版：将卡片内的 `AGENT` 标签与 agent 名称改为同一行展示，进一步减少列表纵向占用并增强列表化观感
 - 收紧“最佳实践 -> Session Cleanup”列表密度：压缩单条 session 卡片的内边距、行距和按钮高度，并把列表改成固定高度滚动区，避免 session 条目过多时把整块页面持续撑长
 - 继续收紧“最佳实践”页内部模块排版：主卡片统一改用相同的纵向节奏与间距，`Session Cleanup` 的条目卡片也改成完整铺满宽度的布局，避免操作条、标题区和内容块宽度观感不一致

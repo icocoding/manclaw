@@ -227,6 +227,7 @@
                 >
                   <template #trigger>
                     <n-button
+                      class="danger-action"
                       type="warning"
                       size="small"
                       :disabled="busy.sessionAction || !agent.id.trim() || !(agent.sessionCount || agent.transcriptFileCount)"

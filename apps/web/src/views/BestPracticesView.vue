@@ -145,6 +145,7 @@
 
             <div class="button-row practices-actions session-cleanup-card__actions">
               <n-button
+                class="danger-action"
                 type="warning"
                 :disabled="busy.sessionAction || !(agent.sessionCount || agent.transcriptFileCount)"
                 @click="clearAgentSessions(agent)"
