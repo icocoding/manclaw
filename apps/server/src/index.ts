@@ -8,7 +8,14 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { createManager } from '@manclaw/core'
-import { APP_NAME, type AgentConfigPayload, type ApiResponse, type FeishuToolsConfig, type QuickModelConfigPayload } from '@manclaw/shared'
+import {
+  APP_NAME,
+  type AgentConfigPayload,
+  type ApiResponse,
+  type ChannelConfigPayload,
+  type FeishuToolsConfig,
+  type QuickModelConfigPayload,
+} from '@manclaw/shared'
 
 const QUIET_LOG_PATHS = new Set([
   '/health',
@@ -19,6 +26,7 @@ const QUIET_LOG_PATHS = new Set([
   '/api/skills/installed',
   '/api/model-setup/current',
   '/api/agents/current',
+  '/api/channels/current',
   '/api/openclaw/plugins',
   '/api/shell/allowed-commands',
 ])
@@ -169,6 +177,7 @@ app.post<{ Body: { allowBundled?: string[] } }>('/api/skills/config', async (req
 })
 app.get('/api/model-setup/current', async () => ok(await manager.getQuickModelConfig()))
 app.get('/api/agents/current', async () => ok(await manager.getAgentConfig()))
+app.get('/api/channels/current', async () => ok(await manager.getChannelConfig()))
 app.delete<{ Params: { id: string } }>('/api/agents/:id/sessions', async (request, reply) => {
   try {
     return ok(await manager.clearAgentSessions(request.params.id))
@@ -288,6 +297,20 @@ app.post<{ Body: AgentConfigPayload }>(
       return ok(await manager.saveAgentConfig(request.body))
     } catch (error) {
       return reply.code(400).send(fail('AGENT_SETUP_FAILED', error instanceof Error ? error.message : 'Agent setup failed.'))
+    }
+  },
+)
+app.post<{ Body: ChannelConfigPayload }>(
+  '/api/channels/save',
+  async (request, reply) => {
+    if (!request.body || !Array.isArray(request.body.items)) {
+      return reply.code(400).send(fail('INVALID_INPUT', 'Body.items is required and must be an array.'))
+    }
+
+    try {
+      return ok(await manager.saveChannelConfig(request.body))
+    } catch (error) {
+      return reply.code(400).send(fail('CHANNEL_SETUP_FAILED', error instanceof Error ? error.message : 'Channel setup failed.'))
     }
   },
 )

@@ -49,7 +49,15 @@
 
           <label class="field">
             <span class="field__label">默认模型</span>
-            <n-input v-model:value="defaults.modelPrimary" class="field-control" placeholder="openai/gpt-5.2" />
+            <n-select
+              :value="defaults.modelPrimary || null"
+              class="field-control"
+              clearable
+              filterable
+              :options="modelOptions"
+              placeholder="选择默认模型"
+              @update:value="(value) => { defaults.modelPrimary = String(value ?? '') }"
+            />
           </label>
 
           <label class="field">
@@ -89,7 +97,11 @@
         <p class="panel__muted">每个 Agent 可配置多条绑定规则；当前支持 `channel` 和可选 `accountId`。</p>
       </div>
 
-      <template v-if="agents.length">
+      <article v-if="busy.refresh && agents.length === 0" class="panel panel--nested">
+        <p class="panel__muted">正在读取 `openclaw.json` 中的 `agents` 与 `bindings`，请稍候...</p>
+      </article>
+
+      <template v-else-if="agents.length">
         <div class="agent-list">
           <article v-for="(agent, index) in agents" :key="agent.sourceId || `${agent.id}-${index}`" class="agent-card">
             <div class="agent-card__head">
@@ -120,7 +132,15 @@
 
               <label class="field">
                 <span class="field__label">模型</span>
-                <n-input v-model:value="agent.modelPrimary" class="field-control" placeholder="留空则继承默认值" />
+                <n-select
+                  :value="agent.modelPrimary || null"
+                  class="field-control"
+                  clearable
+                  filterable
+                  :options="modelOptions"
+                  placeholder="留空则继承默认值"
+                  @update:value="(value) => { agent.modelPrimary = String(value ?? '') }"
+                />
               </label>
 
               <label class="field field--span-2">
@@ -211,7 +231,7 @@
                       size="small"
                       :disabled="busy.sessionAction || !agent.id.trim() || !(agent.sessionCount || agent.transcriptFileCount)"
                     >
-                      {{ busy.sessionAction && busy.sessionAgentId === agent.id ? '清空中...' : '清空Session' }}
+                      {{ busy.sessionAction && busy.sessionAgentId === agent.id ? '清空中...' : '清空 Session' }}
                     </n-button>
                   </template>
                   清空 Agent `{{ agent.id }}` 的所有会话和 transcript？
@@ -282,6 +302,7 @@ import type {
   AgentConfigEntry,
   AgentToolsProfile,
   ConfigDocument,
+  QuickModelConfigDocument,
   RestartNoticeDocument,
   ServiceDetail,
 } from '@manclaw/shared'
@@ -300,6 +321,7 @@ interface EditableAgent extends AgentConfigEntry {
 const agents = ref<EditableAgent[]>([])
 const configContent = ref('')
 const availableChannels = ref<AgentConfigDocument['availableChannels']>([])
+const modelOptions = ref<Array<{ label: string; value: string }>>([])
 const defaultAgentId = ref('')
 const lastSavedSnapshot = ref('')
 const defaults = reactive({
@@ -347,6 +369,7 @@ const defaultAgentOptions = computed(() =>
     })
     .filter((item): item is { label: string; value: string } => item !== null),
 )
+
 const totalBindingCount = computed(() => agents.value.reduce((sum, agent) => sum + normalizeBindings(agent.bindings).length, 0))
 const availableChannelSummary = computed(() => (availableChannels.value.length > 0 ? availableChannels.value.map((item) => item.label).join(', ') : '--'))
 const messageIsError = computed(() => /失败|错误|required|duplicate|duplicated|invalid/i.test(message.value))
@@ -549,16 +572,27 @@ async function closeRestartNotice(): Promise<void> {
 async function refreshAll(): Promise<void> {
   busy.refresh = true
   try {
-    const [agentsDocument, configDocument, restartNoticeDocument] = await Promise.all([
+    const [agentsDocument, configDocument, restartNoticeDocument, quickModelDocument] = await Promise.all([
       apiRequest<AgentConfigDocument>('/api/agents/current'),
       apiRequest<ConfigDocument>('/api/config/current'),
       apiRequest<RestartNoticeDocument | null>('/api/restart-notice'),
+      apiRequest<QuickModelConfigDocument>('/api/model-setup/current'),
     ])
 
     if (!busy.save) {
       applyDocument(agentsDocument)
       message.value = '已读取当前 Agent 配置。'
     }
+    modelOptions.value = quickModelDocument.entries
+      .map((entry) => {
+        const providerKey = entry.provider === 'custom-openai' ? entry.customProviderId || 'custom-openai' : entry.provider
+        const value = `${providerKey}/${entry.model}`
+        return {
+          label: value,
+          value,
+        }
+      })
+      .sort((left, right) => left.label.localeCompare(right.label))
     configContent.value = configDocument.content
     applyRestartNotice(restartNoticeDocument)
   } catch (error) {

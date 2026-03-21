@@ -3,7 +3,7 @@
     <header id="overview" class="hero hero--wide">
       <div>
         <p class="eyebrow">MVP Console</p>
-        <h2>Your Claw, Under Control.</h2>
+        <h2>Command Your Claw.</h2>
       </div>
       <div class="hero__actions">
         <RestartNoticeBar
@@ -79,7 +79,7 @@
         <p class="status-text">{{ managerMessage }}</p>
       </article>
 
-      <article class="panel">
+      <article class="panel revision-panel">
         <div class="section-header">
           <div>
             <p class="panel__label">内部配置</p>
@@ -148,24 +148,6 @@
       </article>
     </section>
 
-    <section class="panel">
-      <div class="section-header">
-        <div>
-          <p class="panel__label">服务控制</p>
-          <h3>openclaw 管理</h3>
-        </div>
-        <p class="panel__muted">当前命令：{{ service.command ?? '--' }}</p>
-      </div>
-      <div class="button-row">
-        <n-button type="primary" :disabled="busy.service" @click="controlService('start')">启动</n-button>
-        <n-button tertiary :disabled="busy.service" @click="controlService('stop')">停止</n-button>
-        <n-button tertiary :disabled="busy.service" @click="controlService('restart')">重启</n-button>
-        <n-button tertiary :disabled="busy.shell" @click="runDoctorFix">
-          {{ busy.shell ? '执行中...' : 'doctor --fix' }}
-        </n-button>
-      </div>
-    </section>
-
     <section id="config" class="two-column">
       <article class="panel panel--stretch">
         <div class="section-header">
@@ -195,7 +177,7 @@
           </div>
         </div>
 
-        <div v-if="revisions.length" class="list">
+        <div v-if="revisions.length" class="list revision-list">
           <div v-for="revision in revisions" :key="revision.id" class="list-item">
             <div>
               <strong>{{ revision.id }}</strong>
@@ -223,9 +205,11 @@
 
         <div class="log-view">
           <div v-for="entry in runtimeLogs" :key="entry.id" class="log-entry">
-            <span class="log-entry__time">{{ formatDateTime(entry.timestamp) }}</span>
-            <span class="log-entry__level">{{ entry.level.toUpperCase() }}</span>
-            <span>{{ entry.message }}</span>
+            <div class="log-entry__meta">
+              <span class="log-entry__time">{{ formatDateTime(entry.timestamp) }}</span>
+              <span class="log-entry__level" :class="`log-entry__level--${entry.level}`">{{ entry.level.toUpperCase() }}</span>
+            </div>
+            <p class="log-entry__message">{{ entry.message }}</p>
           </div>
         </div>
       </article>
@@ -240,8 +224,10 @@
 
         <div class="log-view log-view--compact">
           <div v-for="entry in auditLogs" :key="entry.id" class="log-entry">
-            <span class="log-entry__time">{{ formatDateTime(entry.timestamp) }}</span>
-            <span>{{ entry.message }}</span>
+            <div class="log-entry__meta">
+              <span class="log-entry__time">{{ formatDateTime(entry.timestamp) }}</span>
+            </div>
+            <p class="log-entry__message">{{ entry.message }}</p>
           </div>
         </div>
       </article>
@@ -322,7 +308,6 @@ const shellMessage = ref('准备执行受控命令。')
 const configMessage = ref('可直接编辑配置并保存。')
 const busy = reactive({
   refresh: false,
-  service: false,
   settings: false,
   quickModel: false,
   config: false,
@@ -523,20 +508,6 @@ async function refreshLogs(): Promise<void> {
   }
 }
 
-async function controlService(action: 'start' | 'stop' | 'restart'): Promise<void> {
-  busy.service = true
-  try {
-    service.value = await apiRequest<ServiceDetail>(`/api/openclaw/${action}`, {
-      method: 'POST',
-    })
-    await refreshLogs()
-  } catch (error) {
-    shellMessage.value = error instanceof Error ? error.message : '服务操作失败。'
-  } finally {
-    busy.service = false
-  }
-}
-
 async function saveManagerSettings(): Promise<void> {
   if (!managerSettings.value) {
     return
@@ -674,10 +645,6 @@ async function executeCommandById(commandId: string): Promise<void> {
   } finally {
     busy.shell = false
   }
-}
-
-async function runDoctorFix(): Promise<void> {
-  await executeCommandById('openclaw.doctor-fix')
 }
 
 async function restartFromNotice(): Promise<void> {

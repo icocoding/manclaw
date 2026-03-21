@@ -46,7 +46,16 @@
 
 ## 3. 多 Channels 配置
 
+状态：进行中
+
 目标是支持“多个渠道实例对应多个助手”的实际运营场景，例如不同飞书机器人绑定不同能力的 agent。
+
+当前已开始：
+
+- 已新增独立 Channels 页面路由入口
+- 已支持结构化读取和保存真实 `openclaw.json` 中的 `channels`
+- 已支持按 channel 维护到 Agent 的绑定规则，并联动写回 `bindings[*].match`
+- 渠道实例的详细 schema 当前仍按原始 JSON 对象编辑，尚未细分不同类型的专用表单
 
 - 独立 Channels 页面或并入 Agents/Integrations 体系
 - 支持配置多个 channel 实例

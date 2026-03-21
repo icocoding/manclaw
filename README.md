@@ -43,6 +43,15 @@ docs/
 - 多 Channels 配置
 - 插件安装与管理
 
+当前结构化管理页面已覆盖：
+
+- `概览`：服务状态、配置、日志、受控命令
+- `模型`：多模型条目与默认模型
+- `Agents`：角色参数、bindings、tools、session
+- `Channels`：`channels` 实例与到 Agent 的绑定关系
+- `插件`：插件列表、启用/禁用、Tools 管理
+- `技能`：工作区技能与系统技能
+
 ## 启动
 
 当前项目使用 `pnpm workspace`。

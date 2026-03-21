@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import AgentsView from '../views/AgentsView.vue'
+import BestPracticesView from '../views/BestPracticesView.vue'
+import ChannelsView from '../views/ChannelsView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import ModelsView from '../views/ModelsView.vue'
 import PluginsView from '../views/PluginsView.vue'
@@ -14,7 +16,7 @@ export const router = createRouter({
       name: 'dashboard',
       component: DashboardView,
       meta: {
-        title: 'ManClaw - Your Claw, Under Control.',
+        title: 'ManClaw - Command Your Claw.',
       },
     },
     {
@@ -31,6 +33,22 @@ export const router = createRouter({
       component: AgentsView,
       meta: {
         title: 'ManClaw - Agents',
+      },
+    },
+    {
+      path: '/channels',
+      name: 'channels',
+      component: ChannelsView,
+      meta: {
+        title: 'ManClaw - Channels',
+      },
+    },
+    {
+      path: '/best-practices',
+      name: 'best-practices',
+      component: BestPracticesView,
+      meta: {
+        title: 'ManClaw - Best Practices',
       },
     },
     {

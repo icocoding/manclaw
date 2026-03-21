@@ -166,6 +166,31 @@ export interface AgentChannelOption {
   label: string
 }
 
+export interface ChannelBindingEntry {
+  id: string
+  agentId: string
+  accountId?: string
+}
+
+export interface ChannelConfigEntry {
+  sourceId: string
+  id: string
+  type?: string
+  configText: string
+  bindings: ChannelBindingEntry[]
+}
+
+export interface ChannelConfigPayload {
+  items: ChannelConfigEntry[]
+}
+
+export interface ChannelConfigDocument extends ChannelConfigPayload {
+  availableAgents: Array<{
+    id: string
+    label: string
+  }>
+}
+
 export interface AgentBindingEntry {
   id: string
   channel: string

@@ -16,12 +16,16 @@
           </div>
 
           <nav class="shell__nav">
-            <RouterLink to="/">概览</RouterLink>
-            <RouterLink to="/models">模型</RouterLink>
+            <RouterLink to="/">Overview</RouterLink>
+            <RouterLink to="/models">Models</RouterLink>
             <RouterLink to="/agents">Agents</RouterLink>
-            <RouterLink to="/plugins">插件</RouterLink>
-            <RouterLink to="/skills">技能</RouterLink>
+            <RouterLink to="/channels">Channels</RouterLink>
+            <RouterLink to="/plugins">Plugins</RouterLink>
+            <RouterLink to="/skills">Skills</RouterLink>
+            <RouterLink to="/best-practices">Best Practices</RouterLink>
           </nav>
+
+          <ServiceControlDock />
 
           <section class="theme-switcher">
             <p class="panel__label">风格切换</p>
@@ -53,6 +57,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, RouterView } from 'vue-router'
 import { NConfigProvider, NGlobalStyle, darkTheme } from 'naive-ui'
+
+import ServiceControlDock from './components/ServiceControlDock.vue'
 
 type ThemeId = 'forge' | 'harbor'
 

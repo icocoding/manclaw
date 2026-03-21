@@ -359,6 +359,65 @@
 }
 ```
 
+## Channels 管理
+
+当前 Channels 配置页通过结构化接口管理 `channels` 与对应的 `bindings`，直接读写真实 `openclaw.json`。
+
+### `GET /api/channels/current`
+
+返回 Channels 页面当前所需的结构化数据。
+
+关键字段：
+
+- `availableAgents`
+- `items`
+
+`items` 中每个条目包含：
+
+- `sourceId`
+- `id`
+- `type`
+- `configText`
+- `bindings[]`
+
+`bindings[]` 中每个条目包含：
+
+- `id`
+- `agentId`
+- `accountId`
+
+说明：
+
+- `id` 对应 `channels.<id>`
+- `configText` 为该 channel 节点对应的 JSON 对象文本
+- 保存时会重建页面管理范围内的 `bindings[*].match.channel`
+- 当前支持在 Channels 页按 `agentId + accountId` 维护映射关系
+
+### `POST /api/channels/save`
+
+按结构化表单写回真实 `openclaw.json` 中的 `channels` 和对应 `bindings`。
+
+请求：
+
+```json
+{
+  "items": [
+    {
+      "sourceId": "feishu::1",
+      "id": "feishu",
+      "configText": "{\n  \"type\": \"feishu\",\n  \"appId\": \"cli_xxx\"\n}",
+      "bindings": [
+        {
+          "id": "feishu::channel-binding::1",
+          "agentId": "support-bot",
+          "accountId": "ou_xxx"
+        }
+      ]
+    }
+  ]
+}
+```
+
 ### `POST /api/agents/:id/skills/install-one`
 
 把指定 skill 安装到该 agent 的 workspace `skills/` 目录。

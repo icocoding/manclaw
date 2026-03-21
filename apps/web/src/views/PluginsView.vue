@@ -60,13 +60,14 @@
             <p class="panel__label">OpenClaw Plugins</p>
             <h3>{{ plugins.loadedCount }}/{{ plugins.totalCount }} 已加载</h3>
           </div>
-          <p class="panel__muted">这里的 `disabled` 表示已发现但未启用，不等于“未安装待安装”。</p>
+          <p class="panel__muted">这里的 `disabled` 表示已发现但未启用，不等于“未安装待安装”。最佳实践已迁到独立页面。</p>
         </div>
 
         <div class="button-row">
           <n-button tertiary :type="statusFilter === 'all' ? 'primary' : 'default'" @click="statusFilter = 'all'">全部</n-button>
           <n-button tertiary :type="statusFilter === 'enabled' ? 'primary' : 'default'" @click="statusFilter = 'enabled'">仅启用</n-button>
           <n-button tertiary :type="statusFilter === 'disabled' ? 'primary' : 'default'" @click="statusFilter = 'disabled'">仅禁用</n-button>
+          <RouterLink class="nav-action" to="/best-practices">前往最佳实践</RouterLink>
         </div>
 
         <p class="status-text" :class="{ 'status-text--error': isError }">{{ message }}</p>
@@ -173,26 +174,6 @@
           </table>
         </div>
       </article>
-
-      <article class="panel">
-        <div class="section-header">
-          <div>
-            <p class="panel__label">最佳实践</p>
-            <h3>Feishu Tools</h3>
-          </div>
-        </div>
-        <p class="panel__muted">这里只提供一个安全快捷操作：一键禁用所有 Feishu tools，但保留飞书聊天频道。</p>
-        <div class="button-row">
-          <n-button type="primary" :disabled="busy.feishuTools" @click="disableAllFeishuTools">
-            {{ busy.feishuTools ? '处理中...' : '一键禁用所有 Tools' }}
-          </n-button>
-        </div>
-        <p class="panel__muted">这样可以避免无关 tools 注入上下文，减少 token 浪费，同时不影响飞书消息通道本身。</p>
-        <p class="panel__muted">如果后续需要重新开启，请到插件列表里的 `Feishu -> Tools管理` 弹窗操作。</p>
-        <p class="panel__muted">配置中启用：{{ enabledFeishuToolLabels }}</p>
-        <p class="panel__muted">配置中禁用：{{ disabledFeishuToolLabels }}</p>
-        <p class="status-text" :class="{ 'status-text--error': feishuToolsIsError }">{{ feishuToolsMessage }}</p>
-      </article>
     </section>
 
     <n-modal
@@ -241,8 +222,6 @@
 
           <template v-else>
             <p class="panel__muted">这个插件当前没有通用的 tools 配置写回能力，所以不能真正取消勾选并保存。</p>
-            <p class="panel__muted">这个插件当前也使用同一种 tools 弹窗布局，但 OpenClaw 里还没有通用的插件 tools 写回配置。</p>
-            <p class="panel__muted">所以现在可以统一查看和勾选交互，保存仍未开放。</p>
             <div class="button-row">
               <n-button tertiary @click="toolsModalVisible = false">关闭</n-button>
               <n-button :disabled="true">保存</n-button>
@@ -256,6 +235,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import { NButton, NCheckbox, NInput, NModal, NPopconfirm } from 'naive-ui'
 
 import { apiRequest } from '../lib/api'
@@ -487,30 +467,6 @@ async function refreshFeishuTools(): Promise<void> {
   }
 }
 
-function applyFeishuChannelOnlyPreset(): void {
-  feishuTools.chat = false
-  feishuTools.doc = false
-  feishuTools.wiki = false
-  feishuTools.drive = false
-  feishuTools.perm = false
-  feishuTools.scopes = false
-  feishuTools.bitable = false
-  feishuToolsMessage.value = '已应用“仅飞书通道”预设，保存后不再向模型暴露飞书 tools。'
-  feishuToolsIsError.value = false
-}
-
-function applyFeishuChatToolPreset(): void {
-  feishuTools.chat = true
-  feishuTools.doc = false
-  feishuTools.wiki = false
-  feishuTools.drive = false
-  feishuTools.perm = false
-  feishuTools.scopes = false
-  feishuTools.bitable = false
-  feishuToolsMessage.value = '已应用“通道 + chat 工具”预设，保存后仅保留 feishu_chat。'
-  feishuToolsIsError.value = false
-}
-
 async function saveFeishuTools(): Promise<void> {
   busy.feishuTools = true
   feishuToolsIsError.value = false
@@ -540,11 +496,6 @@ async function saveFeishuTools(): Promise<void> {
 async function saveFeishuToolsFromModal(): Promise<void> {
   await saveFeishuTools()
   toolsModalVisible.value = false
-}
-
-async function disableAllFeishuTools(): Promise<void> {
-  applyFeishuChannelOnlyPreset()
-  await saveFeishuTools()
 }
 
 async function runInstallCommand(): Promise<void> {

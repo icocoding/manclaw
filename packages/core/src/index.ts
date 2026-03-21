@@ -13,6 +13,9 @@ import type {
   AgentConfigPayload,
   AgentToolsProfile,
   AgentWorkspaceSkillEntry,
+  ChannelConfigDocument,
+  ChannelConfigPayload,
+  ChannelBindingEntry,
   ConfigDocument,
   ConfigRevision,
   ConfigValidationResult,
@@ -102,6 +105,8 @@ interface DetectedProcess {
   args: string
   detectedBy: ServiceDetectionSource
   managerName?: string
+  startedAt?: string
+  uptimeSeconds?: number
 }
 
 function tokenizeProcessArgs(args: string): string[] {
@@ -169,6 +174,34 @@ function createServiceManagerCandidates(command: string, processName: string, se
 function parseInteger(value: string): number | undefined {
   const parsed = Number(value.trim())
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function parsePsElapsed(value: string): number | undefined {
+  const normalized = value.trim()
+  if (!normalized) {
+    return undefined
+  }
+
+  const dayMatch = normalized.match(/^(\d+)-(\d{1,2}):(\d{2}):(\d{2})$/)
+  if (dayMatch) {
+    const [, days, hours, minutes, seconds] = dayMatch
+    return Number(days) * 86_400 + Number(hours) * 3_600 + Number(minutes) * 60 + Number(seconds)
+  }
+
+  const hourMatch = normalized.match(/^(\d{1,2}):(\d{2}):(\d{2})$/)
+  if (hourMatch) {
+    const [, hours, minutes, seconds] = hourMatch
+    return Number(hours) * 3_600 + Number(minutes) * 60 + Number(seconds)
+  }
+
+  const minuteMatch = normalized.match(/^(\d{1,2}):(\d{2})$/)
+  if (minuteMatch) {
+    const [, minutes, seconds] = minuteMatch
+    return Number(minutes) * 60 + Number(seconds)
+  }
+
+  const integerValue = parseInteger(normalized)
+  return integerValue
 }
 
 interface HealthProbeResult {
@@ -381,6 +414,16 @@ function createAgentBindingId(agentId: string, index: number): string {
   return `${normalizedId}::binding::${index + 1}`
 }
 
+function createChannelSourceId(channelId: string, index: number): string {
+  const normalizedId = channelId.trim() || 'channel'
+  return `${normalizedId}::${index + 1}`
+}
+
+function createChannelBindingId(channelId: string, index: number): string {
+  const normalizedId = channelId.trim() || 'binding'
+  return `${normalizedId}::channel-binding::${index + 1}`
+}
+
 function normalizeAgentChannels(channels: string[]): string[] {
   return Array.from(
     new Set(
@@ -422,6 +465,42 @@ function normalizeAgentBindings(
       }
 
       const key = `${binding.channel}::${binding.accountId ?? ''}`
+      if (seen.has(key)) {
+        return false
+      }
+
+      seen.add(key)
+      return true
+    })
+}
+
+function normalizeChannelBindings(
+  channelId: string,
+  bindings: Array<{
+    id?: string
+    agentId?: string
+    accountId?: string
+  }>,
+): ChannelBindingEntry[] {
+  const seen = new Set<string>()
+
+  return bindings
+    .map((binding, index) => {
+      const agentId = binding.agentId?.trim() ?? ''
+      const accountId = binding.accountId?.trim() || undefined
+      const id = binding.id?.trim() || createChannelBindingId(channelId, index)
+      return {
+        id,
+        agentId,
+        accountId,
+      }
+    })
+    .filter((binding) => {
+      if (!binding.agentId) {
+        return false
+      }
+
+      const key = `${binding.agentId}::${binding.accountId ?? ''}`
       if (seen.has(key)) {
         return false
       }
@@ -811,13 +890,15 @@ export class ManClawManager {
     const config = await this.readConfigModel()
     const current = this.serviceState.status
     const runningProcess = await this.findRunningProcess(config)
+    const processTiming = runningProcess ? await this.readProcessTiming(config, runningProcess.pid) : undefined
     const health: HealthProbeResult = runningProcess
       ? await this.probeHealth(config)
       : { status: 'disabled', message: 'Health check skipped because no process was found.' }
     const uptimeSeconds =
-      current.startedAt && runningProcess && current.pid === runningProcess.pid
+      processTiming?.uptimeSeconds ??
+      (current.startedAt && runningProcess && current.pid === runningProcess.pid
         ? Math.max(0, Math.floor((Date.now() - new Date(current.startedAt).getTime()) / 1000))
-        : undefined
+        : undefined)
     const args = buildServiceArgs(config.service)
     const cwd = path.resolve(this.rootDir, config.service.cwd)
 
@@ -850,7 +931,10 @@ export class ManClawManager {
         healthStatus: health.status,
         detectedBy: runningProcess.detectedBy,
         managerName: runningProcess.managerName,
-        startedAt: runningProcess.detectedBy === 'managed' ? current.startedAt : undefined,
+        startedAt:
+          (runningProcess.detectedBy === 'managed' ? current.startedAt : undefined) ??
+          runningProcess.startedAt ??
+          processTiming?.startedAt,
       }
     }
 
@@ -1060,6 +1144,20 @@ export class ManClawManager {
     const nextConfig = this.applyAgentConfig(config, candidate)
     await this.saveConfig(`${JSON.stringify(nextConfig, null, 2)}\n`, `Agent setup: ${candidate.defaultAgentId.trim()}`)
     return this.getAgentConfig()
+  }
+
+  async getChannelConfig(): Promise<ChannelConfigDocument> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    return this.extractChannelConfig(config)
+  }
+
+  async saveChannelConfig(candidate: ChannelConfigPayload): Promise<ChannelConfigDocument> {
+    const document = await this.getCurrentConfig()
+    const config = JSON.parse(document.content) as Record<string, unknown>
+    const nextConfig = this.applyChannelConfig(config, candidate)
+    await this.saveConfig(`${JSON.stringify(nextConfig, null, 2)}\n`, 'Channels setup')
+    return this.getChannelConfig()
   }
 
   async clearAgentSessions(agentId: string): Promise<{ agentId: string; storePath: string; clearedFiles: number }> {
@@ -2723,6 +2821,61 @@ export class ManClawManager {
     }
   }
 
+  private extractChannelConfig(config: Record<string, unknown>): ChannelConfigDocument {
+    const channels = asRecord(config.channels)
+    const bindings = Array.isArray(config.bindings) ? config.bindings : []
+    const agentList = Array.isArray(asRecord(config.agents).list) ? (asRecord(config.agents).list as unknown[]) : []
+
+    const availableAgents = agentList
+      .map((entry: unknown, index: number) => {
+        const agentId = readString(asRecord(entry).id) ?? `agent-${index + 1}`
+        return {
+          id: agentId,
+          label: agentId,
+        }
+      })
+      .sort((left: { label: string }, right: { label: string }) => left.label.localeCompare(right.label))
+
+    const items = Object.entries(channels)
+      .map(([channelId, value], index) => {
+        const channelRecord = asRecord(value)
+        const channelBindings = bindings.flatMap((binding, bindingIndex) => {
+          const bindingRecord = asRecord(binding)
+          const match = asRecord(bindingRecord.match)
+          if (readString(match.channel) !== channelId) {
+            return []
+          }
+
+          const agentId = readString(bindingRecord.agentId)
+          if (!agentId) {
+            return []
+          }
+
+          return [
+            {
+              id: createChannelBindingId(channelId, bindingIndex),
+              agentId,
+              accountId: readString(match.accountId),
+            },
+          ]
+        })
+
+        return {
+          sourceId: createChannelSourceId(channelId, index),
+          id: channelId,
+          type: readString(channelRecord.type),
+          configText: JSON.stringify(channelRecord, null, 2),
+          bindings: normalizeChannelBindings(channelId, channelBindings),
+        }
+      })
+      .sort((left, right) => left.id.localeCompare(right.id))
+
+    return {
+      availableAgents,
+      items,
+    }
+  }
+
   private applyQuickModelConfig(config: Record<string, unknown>, candidate: QuickModelConfigPayload): Record<string, unknown> {
     const nextConfig = structuredClone(config)
     const agents = asRecord(nextConfig.agents)
@@ -3051,6 +3204,91 @@ export class ManClawManager {
     return nextConfig
   }
 
+  private applyChannelConfig(config: Record<string, unknown>, candidate: ChannelConfigPayload): Record<string, unknown> {
+    if (!Array.isArray(candidate.items)) {
+      throw new Error('Channels payload must contain items[].')
+    }
+
+    const nextConfig = structuredClone(config)
+    const currentDocument = this.extractChannelConfig(config)
+    const currentAgents = this.extractAgentConfigBase(config)
+    const rawChannels = asRecord(nextConfig.channels)
+    const sourceChannelIds = new Map<string, string>(currentDocument.items.map((item) => [item.sourceId, item.id]))
+    const managedAgentIds = new Set(currentAgents.items.map((item) => item.id))
+    const seenIds = new Set<string>()
+    const normalizedItems = candidate.items.map((item, index) => {
+      const channelId = item.id.trim()
+      if (!channelId) {
+        throw new Error(`Channel ID is required for item #${index + 1}.`)
+      }
+      if (seenIds.has(channelId)) {
+        throw new Error(`Channel ID "${channelId}" is duplicated.`)
+      }
+
+      let parsedConfig: Record<string, unknown>
+      try {
+        const parsed = JSON.parse(item.configText)
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Channel config must be a JSON object.')
+        }
+        parsedConfig = asRecord(parsed)
+      } catch (error) {
+        throw new Error(`Channel "${channelId}" config is invalid: ${error instanceof Error ? error.message : 'invalid JSON'}`)
+      }
+
+      const bindings = normalizeChannelBindings(channelId, Array.isArray(item.bindings) ? item.bindings : [])
+      for (const binding of bindings) {
+        if (!managedAgentIds.has(binding.agentId)) {
+          throw new Error(`Channel "${channelId}" references unknown agent "${binding.agentId}".`)
+        }
+      }
+
+      seenIds.add(channelId)
+      return {
+        sourceId: item.sourceId.trim(),
+        previousId: sourceChannelIds.get(item.sourceId.trim()) ?? item.sourceId.trim() ?? channelId,
+        id: channelId,
+        config: parsedConfig,
+        bindings,
+      }
+    })
+
+    nextConfig.channels = normalizedItems.reduce<Record<string, unknown>>((result, item) => {
+      result[item.id] = structuredClone(rawChannels[item.previousId] ?? item.config)
+      const channelConfig = asRecord(result[item.id])
+      for (const key of Object.keys(channelConfig)) {
+        delete channelConfig[key]
+      }
+      Object.assign(channelConfig, item.config)
+      result[item.id] = channelConfig
+      return result
+    }, {})
+
+    const existingBindings = Array.isArray(nextConfig.bindings) ? nextConfig.bindings : []
+    const managedChannelIds = new Set(currentDocument.items.map((item) => item.id))
+    const preservedBindings = existingBindings.filter((binding) => {
+      const bindingRecord = asRecord(binding)
+      const agentId = readString(bindingRecord.agentId)
+      const channelId = readString(asRecord(bindingRecord.match).channel)
+      return !channelId || !agentId || !managedChannelIds.has(channelId) || !managedAgentIds.has(agentId)
+    })
+
+    nextConfig.bindings = [
+      ...preservedBindings,
+      ...normalizedItems.flatMap((item) =>
+        item.bindings.map((binding) => ({
+          agentId: binding.agentId,
+          match: {
+            channel: item.id,
+            ...(binding.accountId ? { accountId: binding.accountId } : {}),
+          },
+        })),
+      ),
+    ]
+
+    return nextConfig
+  }
+
   private assertRemovedModelsAreNotReferencedElsewhere(config: Record<string, unknown>, candidate: QuickModelConfigPayload): void {
     const current = this.extractQuickModelConfig(config)
     const nextEntries = candidate.entries
@@ -3284,6 +3522,48 @@ export class ManClawManager {
     }
 
     return undefined
+  }
+
+  private async readProcessTiming(
+    config: ManClawConfig,
+    pid: number,
+  ): Promise<{ startedAt?: string; uptimeSeconds?: number } | undefined> {
+    try {
+      const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'etimes=,lstart='], {
+        cwd: this.rootDir,
+        timeout: config.shell.timeoutMs,
+      })
+      const line = stdout
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .find(Boolean)
+
+      if (!line) {
+        return undefined
+      }
+
+      const match = line.match(/^(\S+)\s+(.+)$/)
+      if (!match) {
+        return undefined
+      }
+
+      const [, elapsedText, startedText] = match
+      const uptimeSeconds = parsePsElapsed(elapsedText)
+      const startedAt =
+        uptimeSeconds !== undefined
+          ? new Date(Date.now() - uptimeSeconds * 1000).toISOString()
+          : (() => {
+              const parsed = new Date(startedText)
+              return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString()
+            })()
+
+      return {
+        startedAt,
+        uptimeSeconds,
+      }
+    } catch {
+      return undefined
+    }
   }
 
   private async probeHealth(config: ManClawConfig): Promise<HealthProbeResult> {

@@ -1,14 +1,56 @@
 # 开发记录
 
+## 2026-03-22
+
+### 已完成
+
+- 调整“最佳实践 -> Session Cleanup”标题排版：将卡片内的 `AGENT` 标签与 agent 名称改为同一行展示，进一步减少列表纵向占用并增强列表化观感
+- 收紧“最佳实践 -> Session Cleanup”列表密度：压缩单条 session 卡片的内边距、行距和按钮高度，并把列表改成固定高度滚动区，避免 session 条目过多时把整块页面持续撑长
+- 继续收紧“最佳实践”页内部模块排版：主卡片统一改用相同的纵向节奏与间距，`Session Cleanup` 的条目卡片也改成完整铺满宽度的布局，避免操作条、标题区和内容块宽度观感不一致
+- 调整“最佳实践”页面模块布局：为该页单独改成等宽双列网格，不再沿用全局左宽右窄的 `two-column` 比例；桌面端各模块宽度保持一致，窄屏下仍自动回落为单列
+- 在“最佳实践”页面新增 `Session Cleanup` 区块：直接列出所有 Agent 的 session store、会话数和 transcript 文件数，并提供逐项 `清空 Session` 操作；清理后会立即刷新列表，便于在调整模型、workspace、skills 或 bindings 后快速重置上下文
+- 在“最佳实践”页面补充“清理 Session 时机”提醒：明确当 Agent 的模型、workspace、skills、tools 权限或渠道绑定策略发生变化后，若旧上下文仍干扰新配置，应优先到 Agents 页面执行 `清空 Session`
+- 调整“最佳实践 -> Agent Presets”的 workspace 策略：移除手工输入，改成按默认命名规则自动生成，即基于当前默认 workspace 拼接新 Agent ID，减少重复输入
+- 在“最佳实践”页面新增 `Agent Presets`：支持一键创建“仅聊天 Agent”和“最小权限 Agent”，会直接写入现有 `agents` 配置，并默认继承当前默认 workspace / 模型，便于后续到 Agents 页面继续补充 bindings 和细节
+- 调整“最佳实践 -> 一键新增飞书渠道”的 tools 来源：创建渠道时会优先复用当前飞书 tools 配置；如果尚未配置飞书，服务端接口会自动回退到默认值，因此新增渠道不依赖现有 `channels.feishu`
+- 精简 Channels 页面：移除右下角“原始配置联动 / 当前 openclaw.json”只读区，页面聚焦渠道实例、绑定规则与使用建议，不再重复展示原始 JSON
+- 调整“最佳实践 -> 一键新增飞书渠道”为带表单版本：需先填写 `App ID` 与 `App Secret`，保存时会生成包含 `enabled/defaultAccount/accounts/tools` 的完整 Feishu 配置结构，随后自动跳转到 Channels 页面
+- 在“最佳实践”页面新增“一键新增飞书渠道”操作：会读取当前 `channels`，自动创建一个最小的 `type=feishu` 渠道节点；若 `feishu` 已存在，则自动顺延为 `feishu-2`、`feishu-3`
+- 新增飞书渠道后会直接写回真实 `openclaw.json`，并提示用户前往 Channels 页面继续补全 appId、secret 与绑定规则
+- 左侧导航改为英文，并将 `Best Practices` 调整到菜单最后
+- 去掉插件 `Tools管理` 弹窗中的冗余说明文案，保留必要的“当前无法写回保存”提示
+
 ## 2026-03-21
 
 ### 已完成
+
+- 新增独立“最佳实践”页面与 `/best-practices` 路由，将插件管理中的 `Feishu Tools` 最佳实践区迁出；插件页现在只保留跳转入口，职责收敛为插件列表、安装与 Tools 管理
+- 调整 `Forge` 主题下的 `running` badge 配色：不再沿用偏绿色的通用成功色，改为更贴合铜色系主视觉的运行态颜色；`Harbor` 继续保留青绿色运行态
+- Agent 详情编辑中的模型字段改为可选下拉：默认模型和每个 Agent 的 `modelPrimary` 现在直接读取模型配置页的现有条目，按 `provider/model` 形式选择，不再只能手工输入
+- 优化工作区技能删除反馈：从 Agent workspace 删除技能后，前端会先立即从当前列表中移除，再异步刷新校准，减少“后端已删除但列表消失较慢”的滞后感
+- 调整技能管理页工作区 tab：将“目标 Agent”选择框改为非全宽显示；同时补回工作区技能的实际列表渲染，切换 `工作区技能 / 系统技能` tab 后再次返回时，所选 Agent 的技能项会继续显示并支持删除
+- 为技能管理页补充列表就地加载提示：工作区技能和系统技能两个 tab 在尚未读到数据时，会分别显示明确的“正在读取”提示，避免列表区域空白
+- 为 Agents 页面补充首次加载提示：在尚未读到任何 Agent 且请求进行中时，列表区会明确显示“正在读取 `agents` 与 `bindings`”，避免空白状态被误解为没有数据
+- 补齐非 `managed` 场景下的进程时间展示：服务状态接口现在会按 PID 反查系统进程的启动时间与已运行秒数，因此即使 `openclaw` 不是由当前 `manclaw` 进程直接拉起，概览页也会尽量显示“启动时间”和“运行时长”
+- 将概览页中的“服务控制”抽成全局共享组件 `ServiceControlDock`，统一放到左侧导航下方，所有页面都可直接执行 `启动 / 停止 / 重启 / FIX`
+- 概览页移除重复的 `openclaw 管理` 区块，避免服务控制入口在导航和页面正文中重复出现
+
+- 开始推进 roadmap 第 3 项“多 Channels 配置”，并将其状态从“未开始”更新为“进行中”
+- 新增独立 `Channels` 页面与 `/channels` 路由，支持查看当前渠道实例、可选 Agent 与原始 `openclaw.json` 联动内容
+- 新增 `GET /api/channels/current` 与 `POST /api/channels/save`，结构化读取和保存真实 `openclaw.json` 中的 `channels`
+- Channels 页面支持新增、复制、删除渠道实例，并直接编辑每个 `channels.<id>` 节点对应的 JSON 对象
+- Channels 页面支持按 channel 维护 `agentId + accountId` 绑定规则，保存时会联动重建页面管理范围内的 `bindings[*].match`
+- 更新 `README.md`、`docs/architecture.md`、`docs/api.md` 与 `docs/roadmap.md`，同步记录 Channels 配置进入实际实现阶段
 
 - 修复 `openclaw gateway` 运行时的在线状态探测：进程扫描与 service manager 匹配现在会同时识别 `openclaw-gateway` 这类由子命令派生出的真实进程名，避免实际在线却被误判为 `stopped`
 - 将托管服务默认进程名调整为 `openclaw-gateway`，并让默认推导跟随启动子命令生成 `<command>-<subcommand>` 形式的进程名
 - 新增“撤回上次修改”能力：配置区可直接撤回最近一次 `openclaw.json` 变更；同时回滚前也会先备份当前配置，避免回滚操作本身不可逆
 - Agent 详情新增结构化绑定规则编辑：每个 Agent 现在可维护多条 `bindings`，支持 `channel` 与可选 `accountId`，保存时不再把精细绑定信息压平成纯 channel 列表
 - 记录 Agent tools `allow/deny` 语义：`allow` 用于收窄首次暴露给模型的能力集合，`deny` 为更高优先级的最终禁止项；后续做 token 缩减时应按“候选集 -> allow 收窄 -> deny 剔除 -> 仅注入剩余能力摘要”的顺序实现，而不是让模型先自行读取完整 Skill 文档
+- 在 `manclaw/index.html` 新增独立静态介绍页，以单文件 HTML 形式概述 `ManClaw` 的产品定位、控制面角色与核心能力，便于直接打开预览或单独分发
+- 修复静态介绍页中的长路径与内联配置项换行问题：为 `code` 元素补充断词与换行样式，避免窄宽度下路径溢出卡片
+- 修复 `apps/web` 概览页“内部配置”等卡片中的长路径换行问题：为通用 `panel__muted` 文案补充断词与换行样式，避免路径在窄宽度下溢出
+- 将独立介绍页复制到 `manclaw/index.html`，用于在外部 Web 目录直接复用该静态页面
 
 ## 2026-03-19
 

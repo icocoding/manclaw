@@ -58,7 +58,7 @@
         <n-tab-pane name="workspace" tab="工作区技能">
           <p class="panel__muted">这里按所选 Agent 的 workspace 展示本地技能，并在同一处完成查询、安装、删除，以及目录级启用/禁用。</p>
 
-          <label class="field field--span-2">
+          <label class="field skills-agent-field">
             <span class="field__label">目标 Agent</span>
             <n-select
               v-model:value="selectedInstallAgentId"
@@ -68,7 +68,11 @@
             />
           </label>
 
-          <div v-if="selectedAgent" class="selected-agent-skills">
+          <div v-if="busy.refresh && !selectedAgent && availableAgents.length === 0" class="skills-loading">
+            <p class="panel__muted">正在读取 Agent 列表与工作区技能，请稍候...</p>
+          </div>
+
+          <div v-else-if="selectedAgent" class="selected-agent-skills">
             <div class="section-header">
               <div>
                 <p class="panel__label">技能能力</p>
@@ -91,7 +95,7 @@
                 {{ busy.inspect ? '查询中...' : '查询说明' }}
               </n-button>
               <n-button type="primary" :disabled="busy.directInstall || !canInstallToAgent" @click="installDirectSkill">
-                {{ busy.directInstall ? '安装中...' : '安装到所选Agent' }}
+                {{ busy.directInstall ? '安装中...' : '安装到所选 Agent' }}
               </n-button>
             </div>
 
@@ -123,7 +127,7 @@
 
               <div class="button-row">
                 <n-button type="primary" :disabled="busy.install || skillDetail.malwareBlocked || !selectedInstallAgentId" @click="installSkill">
-                  {{ busy.install ? '安装中...' : '确认安装到所选Agent' }}
+                  {{ busy.install ? '安装中...' : '确认安装到所选 Agent' }}
                 </n-button>
               </div>
             </div>
@@ -131,9 +135,39 @@
 
           <p v-else class="panel__muted">请先选择一个 Agent，再查看该 workspace 的技能并执行安装。</p>
 
-          <p v-if="selectedAgent && workspaceTabSkills.length" class="panel__muted">
-            当前 Agent workspace 技能数：{{ workspaceTabSkills.length }}
-          </p>
+          <div v-if="busy.refresh && selectedAgent && workspaceTabSkills.length === 0" class="skills-loading">
+            <p class="panel__muted">正在读取所选 Agent 的 workspace 技能，请稍候...</p>
+          </div>
+
+          <template v-else-if="selectedAgent && workspaceTabSkills.length">
+            <p class="panel__muted">当前 Agent workspace 技能数：{{ workspaceTabSkills.length }}</p>
+            <div class="selected-agent-skills__list">
+              <span
+                v-for="skill in workspaceTabSkills"
+                :key="`workspace:${skill.state}:${skill.slug}`"
+                class="badge"
+                :class="skill.state === 'installed' ? 'badge--running' : 'badge--stopped'"
+              >
+                {{ skill.slug }}
+                <button
+                  type="button"
+                  class="selected-agent-skill-remove"
+                  :disabled="busy.mutate"
+                  @click="deleteSelectedAgentSkill(skill.slug)"
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+            <p
+              v-for="skill in workspaceTabSkills"
+              v-show="getCaseConflictLabel(skill.slug)"
+              :key="`workspace-conflict:${skill.slug}`"
+              class="panel__muted"
+            >
+              {{ skill.slug }}：{{ getCaseConflictLabel(skill.slug) }}
+            </p>
+          </template>
           <p v-else class="panel__muted">
             {{ selectedAgent ? '该 Agent workspace 里当前还没有本地技能。' : '请先选择一个 Agent。' }}
           </p>
@@ -168,7 +202,11 @@
           </div>
 
           <p class="panel__muted">当前 allowlist：{{ allowBundledDraft.length > 0 ? allowBundledDraft.join(', ') : '未配置，表示不额外限制 bundled skills。' }}</p>
-          <div v-if="runtimeTabSkills.length" class="table-wrap">
+          <div v-if="busy.refresh && runtimeTabSkills.length === 0" class="skills-loading">
+            <p class="panel__muted">正在读取系统运行时技能，请稍候...</p>
+          </div>
+
+          <div v-else-if="runtimeTabSkills.length" class="table-wrap">
             <table class="skills-table">
               <thead>
                 <tr>
@@ -535,15 +573,26 @@ async function deleteSelectedAgentSkill(slug: string): Promise<void> {
     return
   }
 
+  const targetAgent = availableAgents.value.find((item) => item.id === agentId)
+  const previousWorkspaceSkills = targetAgent?.workspaceSkills ? [...targetAgent.workspaceSkills] : undefined
+
   busy.mutate = true
   try {
     const result = await apiRequest<SkillMutationResult>(`/api/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(slug)}`, {
       method: 'DELETE',
     })
+
+    if (targetAgent?.workspaceSkills) {
+      targetAgent.workspaceSkills = targetAgent.workspaceSkills.filter((item) => item.slug !== slug)
+    }
+
     mutationMessage.value = result.message
-    await refreshSkillPanels()
+    void refreshSkillPanels()
     await openRestartPrompt(`Agent ${agentId} 的技能 ${slug} 已变更。建议现在重启 OpenClaw。`)
   } catch (error) {
+    if (targetAgent && previousWorkspaceSkills) {
+      targetAgent.workspaceSkills = previousWorkspaceSkills
+    }
     mutationMessage.value = error instanceof Error ? error.message : 'Agent 技能删除失败。'
   } finally {
     busy.mutate = false
@@ -676,6 +725,10 @@ onMounted(async () => {
   display: grid;
   gap: 12px;
   margin: 12px 0 14px;
+}
+
+.skills-agent-field {
+  max-width: 360px;
 }
 
 .selected-agent-skills {
