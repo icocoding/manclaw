@@ -181,6 +181,12 @@ pnpm release:prepare
 
 也就是说，`0.1.0` 连续多次提交时，流水线会持续重打 `v0.1.0`
 
+如果要直接用 git 触发正式发布：
+
+```bash
+bash scripts/trigger-git-release.sh
+```
+
 然后进入 `manclaw-release/` 即可独立安装运行：
 
 ```bash

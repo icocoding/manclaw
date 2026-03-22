@@ -4,6 +4,8 @@
 
 ### 已完成
 
+- 将“release”的协作语义固定到仓库级 `AGENTS.md`：后续在 `manclaw` 仓库内，当用户直接说“release”时，默认按 git 触发发布处理，即优先执行 `scripts/trigger-git-release.sh` 或等价的 `[release]` 空提交推送流程，不再临时解释成仅本地打包或其他发布动作
+- 增加 git 触发发布脚本：新增 `scripts/trigger-git-release.sh`，默认会在 `master` 上创建一个包含 `[release]` 的空提交并推送到 `origin/master`，用于显式触发 GitHub Release pipeline，而不需要手工记忆空提交命令；README 的发布说明也已同步补充
 - 扩展 shell 安装脚本的生命周期支持：`scripts/install-latest-release.sh` 现在支持显式 `install / uninstall` 两种动作；`uninstall` 会卸载全局 `manclaw-release`，并可通过 `--remove-files` 一并删除目标目录下解压出的 `manclaw-release/` 发布目录。根 README 与发布 README 模板也已同步补充卸载说明，避免脚本和文档脱节
 - 调整 shell 安装脚本交互方式：当 `scripts/install-latest-release.sh` 未显式传入 `install / uninstall` 且处于交互式 shell 时，会先提示选择“安装”或“卸载”；非交互场景仍默认走 `install`，以保持 `curl | bash` 和 CI 脚本兼容
 - 修复 `Profiles 管理` 新增 profile 只写 `manclaw` 配置、不初始化 OpenClaw profile 的问题：左侧弹窗新增现在改走独立 `/api/manager/profiles` 接口，后端会先执行 `openclaw --profile <id> onboard --mode local --non-interactive --accept-risk ...` 初始化 profile，成功后才写入 `.manclaw/config.json`；若 onboard 失败会直接阻断落库并把错误回显到弹窗。同时当前 profile 启动前也会自动补一次初始化，未初始化状态在服务控制里会明确提示
