@@ -4196,9 +4196,6 @@ export class ManClawManager {
 
     const defaultWorkspace = candidate.defaults.workspace.trim()
     const defaultModelPrimary = candidate.defaults.modelPrimary.trim()
-    if (!defaultWorkspace) {
-      throw new Error('Default workspace is required.')
-    }
     if (!defaultModelPrimary) {
       throw new Error('Default model is required.')
     }
@@ -4212,7 +4209,11 @@ export class ManClawManager {
     agents.defaults = defaults
     defaults.model = defaultModel
     defaults.compaction = defaultCompaction
-    defaults.workspace = defaultWorkspace
+    if (defaultWorkspace) {
+      defaults.workspace = defaultWorkspace
+    } else {
+      delete defaults.workspace
+    }
     defaultModel.primary = defaultModelPrimary
 
     const defaultCompactionMode = candidate.defaults.compactionMode.trim()
@@ -4319,10 +4320,14 @@ export class ManClawManager {
   private async ensureAgentWorkspaces(config: Record<string, unknown>, candidate: AgentConfigPayload): Promise<void> {
     const currentDocument = this.extractAgentConfigBase(config)
     const currentAgentIds = new Set(currentDocument.items.map((item) => item.id))
+    const managerConfig = await this.readConfigModel()
+    const fallbackWorkspace =
+      (await this.readWorkspaceForService(managerConfig.service)) ??
+      buildDefaultProfileWorkspace(managerConfig.service.profileMode, managerConfig.service.profileName, managerConfig.service.id)
     const normalizedItems = candidate.items
       .map((item) => ({
         id: item.id.trim(),
-        workspace: this.resolveWorkspacePath(item.workspace?.trim() || candidate.defaults.workspace.trim()),
+        workspace: this.resolveWorkspacePath(item.workspace?.trim() || candidate.defaults.workspace.trim() || fallbackWorkspace),
         modelPrimary: item.modelPrimary?.trim() || candidate.defaults.modelPrimary.trim(),
       }))
       .filter((item) => item.id)
@@ -4330,8 +4335,6 @@ export class ManClawManager {
     if (normalizedItems.length === 0) {
       return
     }
-
-    const managerConfig = await this.readConfigModel()
     const command = managerConfig.service.command.trim() || 'openclaw'
     const cwd = path.resolve(this.rootDir, managerConfig.service.cwd)
     const env = buildServiceEnv(managerConfig.service)
