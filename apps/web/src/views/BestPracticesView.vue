@@ -16,22 +16,22 @@
       <article class="panel panel--stretch practices-panel">
         <div class="section-header">
           <div>
-            <p class="panel__label">Feishu Tools</p>
-            <h3>减少无关飞书 tools 注入</h3>
+            <p class="panel__label">Feishu Surface</p>
+            <h3>收紧飞书相关能力暴露</h3>
           </div>
-          <p class="panel__muted">这里提供安全快捷的推荐操作，用于快速收紧飞书相关 tools 的暴露面。</p>
+          <p class="panel__muted">这里提供安全快捷的推荐操作，用于同时收紧飞书渠道 tools 和对应系统技能的暴露面。</p>
         </div>
 
-        <p class="panel__muted">建议场景：只保留飞书消息通道，不让飞书文档、飞书云盘、飞书 Wiki、飞书权限等 tools 注入模型上下文。</p>
+        <p class="panel__muted">建议场景：只保留飞书消息通道，不让飞书文档、飞书云盘、飞书 Wiki、飞书权限等 tools 和 `feishu-*` 系统技能继续注入模型上下文。</p>
 
         <div class="button-row practices-actions">
           <n-button type="primary" :disabled="busy.feishuTools" @click="disableAllFeishuTools">
-            {{ busy.feishuTools ? '处理中...' : '一键禁用所有飞书 Tools' }}
+            {{ busy.feishuTools ? '处理中...' : '一键收紧飞书能力暴露' }}
           </n-button>
           <RouterLink class="nav-action" to="/plugins">前往插件页</RouterLink>
         </div>
 
-        <p class="panel__muted">这样可以避免无关飞书 tools 注入上下文，减少 token 浪费，同时不影响飞书消息通道本身。</p>
+        <p class="panel__muted">这样可以避免无关飞书 tools 和系统技能注入上下文，减少 token 浪费，同时不影响飞书消息通道本身。</p>
         <p class="panel__muted">如果后续需要重新开启飞书 tools，请到插件列表中的 `Feishu -> Tools管理` 弹窗操作。</p>
         <p class="panel__muted">飞书 tools 配置中启用：{{ enabledFeishuToolLabels }}</p>
         <p class="panel__muted">飞书 tools 配置中禁用：{{ disabledFeishuToolLabels }}</p>
@@ -184,7 +184,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { NButton, NInput } from 'naive-ui'
 
-import type { AgentConfigDocument, ChannelConfigDocument, ConfigDocument, FeishuToolsConfigDocument } from '@manclaw/shared'
+import type { AgentConfigDocument, ChannelConfigDocument, ConfigDocument, FeishuToolsConfigDocument, InstalledSkillsDocument } from '@manclaw/shared'
 
 import { apiRequest } from '../lib/api'
 import { onServiceChanged } from '../lib/service-events'
@@ -309,9 +309,31 @@ async function disableAllFeishuTools(): Promise<void> {
   feishuTools.perm = false
   feishuTools.scopes = false
   feishuTools.bitable = false
-  feishuToolsMessage.value = '已应用“仅飞书通道”预设，保存后不再向模型暴露飞书 tools。'
+  feishuToolsMessage.value = '正在应用“仅飞书通道”预设，并同步禁用系统技能中的 feishu-* ...'
   feishuToolsIsError.value = false
   await saveFeishuTools()
+
+  try {
+    const installedSkills = await apiRequest<InstalledSkillsDocument>('/api/skills/installed')
+    const feishuSkills = installedSkills.items.filter((item) => item.slug.toLowerCase().startsWith('feishu-'))
+
+    for (const skill of feishuSkills) {
+      if (skill.state === 'disabled') {
+        continue
+      }
+      await apiRequest(`/api/skills/${encodeURIComponent(skill.slug)}/disable`, {
+        method: 'POST',
+      })
+    }
+
+    feishuToolsMessage.value =
+      feishuSkills.length > 0
+        ? `已禁用飞书 tools，并同步禁用 ${feishuSkills.length} 个 feishu-* 系统技能。建议重启 OpenClaw。`
+        : '已禁用飞书 tools；当前未发现可额外处理的 feishu-* 系统技能。建议重启 OpenClaw。'
+  } catch (error) {
+    feishuToolsIsError.value = true
+    feishuToolsMessage.value = error instanceof Error ? error.message : '飞书系统技能禁用失败。'
+  }
 }
 
 function nextAvailableChannelId(existingIds: string[], baseId: string): string {

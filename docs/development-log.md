@@ -4,6 +4,7 @@
 
 ### 已完成
 
+- 扩展“最佳实践 -> 一键禁用所有飞书 Tools”的动作范围：该按钮现在除了写入当前 profile 的 `channels.feishu.tools` 外，还会同步扫描当前系统技能列表中的 `feishu-*` 条目，并通过现有禁用接口逐个写入 `openclaw.json -> skills.entries.<slug>.enabled=false`；这样可以同时收紧飞书渠道工具暴露和对应系统技能开关
 - 收紧 service workspace 的默认推导：`readWorkspaceForService()` 不再把 `service.cwd="."` 直接当成 workspace 并解析到 `~/.manclaw-home`；对于 default profile 这类未显式配置 workspace 的 service，现在线路会回到 OpenClaw 约定的默认 workspace。同时，系统技能的推荐列表、安装、启用、禁用、删除、更新等本地目录操作也都切换到这套 service workspace 解析结果，不再误落到 `manclaw` 自身运行目录
 - 统一 Agent workspace 的回退来源：Agents 页与技能页“技能能力”现在不再把空的 `agents.defaults.workspace` 直接按 `manclaw` 的 `rootDir` 解析成 `~/.manclaw-home`；当 Agent 自身未配置 `workspace` 且 `openclaw.json` 的默认 workspace 为空时，会回退到当前 OpenClaw service 的默认 workspace（例如 default profile -> `~/.openclaw/workspace`），从而与“运行时技能”区块保持一致
 - 加强混合输出里的 JSON 提取：`packages/core` 不再从第一个 `{` 起把整段输出直接 `JSON.parse` 到结尾，而是会扫描并提取首个完整、配对闭合的 JSON 值后再解析；这样 `openclaw plugins list --json`、`skills list --json` 等命令即使在 JSON 前后夹带额外日志，也不会再因为尾部多一段非 JSON 文本而直接报 `Unexpected non-whitespace character after JSON`
