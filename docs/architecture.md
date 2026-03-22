@@ -74,9 +74,12 @@ manclaw/
 - 配置版本：`.manclaw/revisions/*.json`
 - 运行日志：`.manclaw/runtime.log.jsonl`
 - 审计日志：`.manclaw/audit.log.jsonl`
-- 默认托管服务：真实 `openclaw` 命令模型
+- 默认托管服务：真实 `openclaw` 命令模型；当前配置已扩展为“`service` 当前激活实例 + `services` 多实例注册表”
 - 状态探测：优先识别当前托管子进程，其次扫描系统进程名
 - 健康检查：可选通过 HTTP endpoint 判定 `running` / `degraded`
+- `openclaw` 配置文件路径统一通过 `OPENCLAW_CONFIG_PATH` 环境变量传递，不再额外拼接 `--config <path>` 这类启动参数
+- service 配置中的 `profileMode / profileName / port` 已从通用 `args` 中拆出，避免 profile 切换或端口调整直接污染命令参数编辑
+- 启动服务和辅助 CLI 调用时，核心层会按当前实例自动拼接 `--dev`、`--profile <name>` 和 `--port <n>` 等前缀参数
 
 ## 功能模块
 

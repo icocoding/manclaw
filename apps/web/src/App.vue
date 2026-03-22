@@ -15,6 +15,8 @@
             <p class="shell__intro">把 OpenClaw 的服务控制、配置调整和技能管理收进一个面板。</p>
           </div>
 
+          <ServiceControlDock />
+
           <nav class="shell__nav">
             <RouterLink to="/">Overview</RouterLink>
             <RouterLink to="/models">Models</RouterLink>
@@ -24,8 +26,6 @@
             <RouterLink to="/skills">Skills</RouterLink>
             <RouterLink to="/best-practices">Best Practices</RouterLink>
           </nav>
-
-          <ServiceControlDock />
 
           <section class="theme-switcher">
             <p class="panel__label">风格切换</p>

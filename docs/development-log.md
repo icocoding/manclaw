@@ -4,6 +4,42 @@
 
 ### 已完成
 
+- 修复 `Profiles 管理` 新增 profile 只写 `manclaw` 配置、不初始化 OpenClaw profile 的问题：左侧弹窗新增现在改走独立 `/api/manager/profiles` 接口，后端会先执行 `openclaw --profile <id> onboard --mode local --non-interactive --accept-risk ...` 初始化 profile，成功后才写入 `.manclaw/config.json`；若 onboard 失败会直接阻断落库并把错误回显到弹窗。同时当前 profile 启动前也会自动补一次初始化，未初始化状态在服务控制里会明确提示
+- 修复 `default` 等当前 service 明明已有 `openclaw.json`、但 Overview 仍显示“当前 profile 尚未发现可用配置文件”的问题：`/api/manager/settings` 现在在当前 service 的 `configPath` 为空时，会调用 `openclaw config file` 发现真实配置路径并持久化回 `.manclaw/config.json`；后续模型配置与配置编辑页面即可正常读取
+- 增加受管 gateway PID 持久化：`manclaw` 现在会把最后一次受管 OpenClaw 进程的 `pid + serviceId + startedAt` 写入 `.manclaw/runtime-state.json`，server 热重载或重启后会先恢复并校验这份 PID，再决定是否启动新的 gateway，减少开发时因内存态丢失导致的重复拉起
+- 调整新增 Profile 的默认 workspace 规则：不再继承当前 profile 的 `agents.defaults.workspace`，而是按目标 profile 的 home 自动生成独立路径，例如 `default -> ~/.openclaw/workspace`、`test001 -> ~/.openclaw-test001/workspace`，避免多个 profile 默认写到同一份 workspace
+- 扩展 `Profiles 管理`：新增 profile 现在支持“复制自现有 Profile”；删除 profile 时新增“同时删除 workspace”选项，并在后端校验该 workspace 是否仍被其他 profile 共享，避免误删共用目录
+- 调整 `Profiles 管理` 的新增语义：复制 Profile 与共享 workspace 现在拆成两种互斥模式。`sourceId` 用于完整复制源 profile 的配置与 workspace；`workspaceSourceId` 用于仅共享另一个 profile 的 workspace，不再允许“复制 Profile 时再勾选共享 workspace”这种混合状态
+- 放宽 `Profiles 管理` 弹窗布局：弹窗宽度上调到更大的桌面尺寸，新增表单改成更疏的双列布局，profile 列表增加滚动区和更大的卡片内边距，减少当前管理窗口过于紧凑的问题
+- 修正 `Profiles 管理` 表单网格：之前用 `.field-control:last-of-type` 让底部元素跨整行，误把第二个下拉框也撑成整行；现改为只让提交按钮占满整行，两个下拉框恢复并排显示
+- 将 runtime 层从“单 current service”改成“按 serviceId 独立托管”：`serviceState` 与 `.manclaw/runtime-state.json` 都改为多 service 结构，server 热重载后会分别恢复每个受管 gateway 的 PID；切换当前 profile 不再顺手把其他已运行 profile 挤掉，多个 gateway 可以被 `manclaw` 同时监管
+- 补强多实例进程发现：除了按受管 PID、service manager 和 `ps` 参数匹配外，新增基于 gateway 监听端口的兜底发现；当 `openclaw-gateway` 子进程本身参数不完整、但端口已被目标 profile 占用时，`manclaw` 也能识别该实例已在运行，避免再次误起同端口的第二个 gateway
+- 调整接入设置中的 `cwd` 回填来源：当当前 service 已经有可用配置文件时，`/api/manager/settings` 会从 `openclaw.json -> agents.defaults.workspace` 读取默认 workspace 并覆盖展示值；若当前 profile 尚无可用配置文件，则继续保留已保存的 `cwd`，不做额外猜测
+- 将所有高频轮询路径与 `gateway status` 脱钩：`/api/manager/settings` 与配置读写路径不再在请求过程中主动执行 `openclaw ... gateway status`，页面轮询只消费已保存配置，避免浏览器常驻时持续拉起 `openclaw` 子进程
+- 继续收紧 Overview 高频轮询：当当前 profile 尚未发现 `configPath` 时，概览页不再轮询模型配置和原始配置接口，改为直接显示“配置文件暂不可用”，避免页面每 5 秒继续触发配置路径发现与 `openclaw gateway status`
+- 修复 `openclaw gateway status` 探测子进程泄漏：将当前 profile 的状态探测改成受控 `spawn` 执行，命令结束或超时后会主动清理整组子进程，避免 Overview / 服务控制轮询不断留下 `openclaw` 残留进程
+- 调整默认进程名规则以携带 profile：service 未手工指定 `processName` 时，现在会按 `openclaw-gateway-<profile>` 生成，新增 profile 也会自动带上对应进程名，减少多个 gateway 实例并行时的识别歧义
+- 在左侧服务控制面板补充多 profile 监管摘要：不恢复中间状态列表，但新增更紧凑的 `运行 x/y` 与 `异常 z` 两个摘要 chip，让多个 gateway 实例的整体分布仍能一眼看到
+- 修复 Overview 接入设置在部分接口失败时无法回填的问题：首屏刷新不再让 `/api/model-setup/current`、日志或 shell 命令列表的失败中断 `/api/manager/settings` 回填；即使当前 profile 因缺少 `configPath` 导致模型接口 `500`，接入设置也会继续显示已保存的命令、端口和参数
+- 精简左侧服务控制面板：移除中间的多实例状态列表，面板只保留当前 profile 选择、Profiles 管理入口、重启提示、当前命令摘要和启动/停止/重启/FIX 操作，减少侧栏纵向占用
+- 将当前 service 的配置路径解析切换为 CLI 优先：`getManagerSettings()` 与配置读写现在会优先执行当前 profile 的 `openclaw ... gateway status` 获取 `Config (cli)`；若 CLI 标记为 `(missing)`，页面直接显示 `--`，不再继续沿用旧保存值误导显示
+- 收紧 profile 运行态判定与配置路径来源：默认不再预填 `configPath`，新增 profile 也不会继承默认配置文件路径；Overview 在未发现配置文件时直接显示 `--`。同时去掉从 `openclaw.json` 反推 `cwd` 的本地推导逻辑，配置路径只接受 `openclaw gateway status` 等 CLI 发现结果，进程扫描也改成要求更完整的参数签名，避免未启动 profile 因共享进程名被误判为运行中
+- 为多 profile 服务新增独立端口字段：`port` 现在单独存储并支持旧配置迁移，Overview 与左侧 `Profiles 管理` 弹窗都提供独立端口输入；新增 profile 时会自动建议下一个可用端口，保存时也会联动更新健康检查地址
+- 将 service profile 从命令参数中拆出为独立字段：`profileMode / profileName` 现在单独存放，Overview 的“命令参数”只编辑真实业务参数；启动服务和辅助 CLI 调用时再由核心层自动拼接 `--dev / --profile` 前缀，同时兼容迁移旧配置里仍写在 `args` 开头的 profile 参数
+- 调整 Profile 管理入口到左侧服务控制面板：在 profile 选择框下新增 `Profiles 管理` 按钮，并改为 `Naive UI` 弹窗处理输入新增、列表删除和二次确认；Overview 右侧改回只读的内部配置卡，避免同一功能出现两套入口
+- 调整 Overview 的 Profile 管理方式：移除中间统计状态面板与左侧“管理 Profiles”跳转，改为在接入设置右侧直接提供 `输入新增 + 列表删除` 的 Profile 管理区；删除操作增加浏览器二次确认，Profile 切换继续统一收口到左侧服务控制面板
+- 将“需要重启”提示并入左侧服务控制面板：`ServiceControlDock` 现在会直接读取 `/api/restart-notice`，在导航侧栏内提供统一的“立即重启 / 稍后关闭”入口；Overview 页头同步移除重复的重启条，避免同页出现两处重启操作
+- 收紧 Overview 接入设置到“当前 service 编辑”模式：移除服务实例、实例名称、实例 ID 和运行 Profile 的重复入口，只保留当前 service 的命令、进程名和参数编辑；实例与 profile 切换统一收口到左侧服务控制面板
+- 调整服务实例默认命名：首个默认 profile / service 的 ID 统一使用 `default`，不再迁移成 `service-1`；同时清理旧配置里残留的 `services.activeId` 兼容字段
+- 调整服务配置模型为“当前 service + services.items[]”而非 `services.activeId`：当前实例直接由 `service.id` 指向，左侧服务控制面板新增 profile 切换与 Overview 入口，同时会列出所有服务实例状态，不再只盯一个 activeId
+- 将 `manclaw` 的服务接入配置扩成“当前激活实例 + `services` 多实例注册表”：Overview 现在可新增、复制、删除并切换服务实例，保存后会把当前实例同步到兼容字段 `service`，同时为后续多 OpenClaw 环境切换打基础
+- 统一 OpenClaw CLI 辅助调用对当前实例 profile 的继承：`plugins / skills / sessions / doctor / agents add` 等调用现在会复用当前实例的全局参数前缀（如 `--dev`、`--profile`），不再只在启动 gateway 时生效
+- 调整 OpenClaw 配置传递策略：不再通过 `configFlag` 往启动参数里自动拼接 `configPath`，统一只通过环境变量 `OPENCLAW_CONFIG_PATH` 传递当前实例绑定的配置文件路径
+- 修正 Overview 的 Profile 展示与默认值回填：`CLI Profile` 摘要现在固定显示已保存的 service args，而不是跟随未保存表单变化；同时首次加载时会正确回填接入设置默认值，仅在用户已开始编辑时才阻止轮询覆盖
+- 修复 Overview 中运行 Profile 等接入设置会被自动刷新覆盖的问题：当命令、Profile、启动参数存在未保存改动时，轮询刷新不再重新套用服务端设置，避免用户刚选择 `--dev` 或自定义 profile 就在 5 秒轮询中被冲掉
+- 收紧 Overview 接入设置：移除“工作目录 / 配置文件路径”的可编辑输入，页面只保留命令、Profile 和启动参数；当前路径改为只读展示，避免在概览页暴露不常用且容易误改的底层路径
+- 在 Overview 的“接入设置”中新增结构化 Profile 管理：可直接选择默认状态目录、`--dev` 或自定义 `--profile <name>`，保存时会自动写回 `service.args` 前缀，并在统计卡片中显示当前 Profile 摘要，减少手工编辑启动参数时的歧义
+- 修复 Agents 页面新增 Agent 只写配置不初始化 workspace 的问题：`/api/agents/save` 现在会对新 Agent 先调用 `openclaw agents add --workspace ... --non-interactive` 创建真实 workspace 骨架（含 `AGENTS.md`、`SOUL.md`、`TOOLS.md` 等），再写回 `bindings / tools / model` 等最终配置
 - 调整宣传图顶部摘要卡内部排版：将状态点、装饰条和标题文案整体右移下移，并缩短装饰条长度，避免标题首行与左侧图形元素发生碰撞
 - 放大宣传图右侧信息面板：整体外框横向和纵向都扩大一档，同时把第一个摘要子卡片单独加高，给顶部说明文案留出更稳定的展示空间
 - 继续修复宣传图顶部副标题溢出：将 `Focused on management goals...` 这行进一步拆成两行并再收一档字号，避免摘要区最下行继续越界

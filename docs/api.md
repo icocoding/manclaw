@@ -90,6 +90,66 @@
 
 这三个接口都直接返回最新的 `ServiceDetail`。
 
+### `GET /api/manager/settings`
+
+返回 `manclaw` 当前管理配置，用于接入设置、服务控制和 Profiles 管理。
+
+### `POST /api/manager/settings`
+
+保存完整的 `manclaw` 管理配置。
+
+### `POST /api/manager/profiles`
+
+新增一个命名 profile，并在写入 `manclaw` 配置前先执行 OpenClaw profile 初始化。
+
+请求：
+
+```json
+{
+  "id": "test01",
+  "port": 18790,
+  "sourceId": "default"
+}
+```
+
+或共享另一个 profile 的 workspace：
+
+```json
+{
+  "id": "test01-lite",
+  "port": 18791,
+  "workspaceSourceId": "default"
+}
+```
+
+行为说明：
+
+- 服务端会先执行 `openclaw --profile <id> onboard --mode local --non-interactive --accept-risk ...`
+- onboard 成功后，才会把新 profile 写入 `.manclaw/config.json`
+- `sourceId` 存在时，会在初始化后复制源 profile 的 `openclaw.json` 和 workspace，并重写目标 profile 的默认 workspace 与 gateway 端口
+- `workspaceSourceId` 存在时，新 profile 会直接复用该 profile 的默认 workspace，但不会复制对方的 `openclaw.json`
+- `sourceId` 与 `workspaceSourceId` 不能同时设置
+- onboard 失败时不会落库，接口直接返回错误信息
+
+### `POST /api/manager/profiles/delete`
+
+删除一个 profile。
+
+请求：
+
+```json
+{
+  "id": "test01",
+  "removeWorkspace": true
+}
+```
+
+行为说明：
+
+- 至少保留一个 profile
+- `removeWorkspace=true` 时，会尝试删除该 profile 对应的默认 workspace
+- 若该 workspace 仍被其他 profile 引用，接口会直接报错并阻止删除
+
 ### `GET /api/openclaw/plugins`
 
 调用 `openclaw plugins list --json`，返回当前插件清单。
@@ -453,17 +513,29 @@
 
 MVP 当前使用 `JSON` 配置文件，路径默认位于当前启动目录下的 `.manclaw/config.json`。
 
-`service` 相关关键字段：
+`service / services` 相关关键字段：
 
-- `command`: 启动命令，默认 `openclaw`
-- `args`: 启动参数
-- `processName`: 进程扫描时用于匹配的进程名；默认 gateway 场景为 `openclaw-gateway`
-- `configPath`: `openclaw` 配置文件路径
-- `configFlag`: 启动时附加配置文件的参数名，默认 `--config`
+- `service`: 当前实例，供服务控制与状态接口直接读取；当前切换由 `service.id` 决定
+- `services.items[]`: 多实例服务注册表
+- `services.items[].id`: 服务实例 ID
+- `services.items[].label`: 服务实例显示名，可选
+- `services.items[].command`: 启动命令，默认 `openclaw`
+- `services.items[].profileMode / profileName`: 运行 profile；`--dev` 与 `--profile <name>` 不再直接混在参数列表里
+- `services.items[].port`: gateway 监听端口；独立于普通参数单独存储
+- `services.items[].args`: 业务启动参数，例如 `gateway`、`--log-level debug`，不再直接混入 `--dev`、`--profile`、`--port`
+- `services.items[].processName`: 进程扫描时用于匹配的进程名；默认 gateway 场景为 `openclaw-gateway`
+- `services.items[].configPath`: 当前实例绑定的 `openclaw.json`
+- `services.items[].cwd`: 当前实例的 workspace / 工作目录
 - `healthcheck.enabled`: 是否启用 HTTP 健康检查
 - `healthcheck.url`: 健康检查地址
 - `healthcheck.timeoutMs`: 健康检查超时
 - `healthcheck.expectedStatus`: 期望 HTTP 状态码
+
+补充说明：
+
+- `configPath` 不再通过额外参数自动拼到启动命令后，而是统一通过环境变量 `OPENCLAW_CONFIG_PATH` 传递给 `openclaw`
+- 依赖 `openclaw` CLI 的辅助接口会继承当前实例的 profile 前缀，例如 `--dev`、`--profile <name>`
+- 启动服务时会自动把 `profileMode / profileName / port` 拼回最终 CLI 参数，因此前端参数编辑框只管理普通参数
 
 ### `GET /api/config/current`
 

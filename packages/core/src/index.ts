@@ -1,7 +1,7 @@
 import { execFile, spawn, type ChildProcessByStdio } from 'node:child_process'
 import type { Readable } from 'node:stream'
 import { randomUUID } from 'node:crypto'
-import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -19,6 +19,8 @@ import type {
   ConfigDocument,
   ConfigRevision,
   ConfigValidationResult,
+  CreateProfilePayload,
+  DeleteProfilePayload,
   FeishuToolsConfig,
   FeishuToolsConfigDocument,
   HealthSnapshot,
@@ -54,21 +56,28 @@ const execFileAsync = promisify(execFile)
 
 const DEFAULT_CONFIG: ManClawConfig = {
   service: {
+    id: 'default',
+    label: 'Default',
+    profileMode: 'default',
+    profileName: undefined,
     command: 'openclaw',
+    port: undefined,
     args: [],
     cwd: '.',
     env: {},
     autoStart: true,
     autoRestart: true,
     processName: 'openclaw-gateway',
-    configPath: './openclaw.config.json',
-    configFlag: '',
+    configPath: '',
     healthcheck: {
       enabled: false,
       url: 'http://127.0.0.1:8080/health',
       timeoutMs: 3_000,
       expectedStatus: 200,
     },
+  },
+  services: {
+    items: [],
   },
   shell: {
     timeoutMs: 10_000,
@@ -84,6 +93,7 @@ interface ManagerPaths {
   revisionsDir: string
   runtimeLogPath: string
   auditLogPath: string
+  runtimeStatePath: string
 }
 
 type ManagedChildProcess = ChildProcessByStdio<null, Readable, Readable>
@@ -107,6 +117,21 @@ interface DetectedProcess {
   managerName?: string
   startedAt?: string
   uptimeSeconds?: number
+}
+
+interface GatewayStatusCacheEntry {
+  value: ReturnType<typeof parseGatewayStatusOutput>
+  cachedAt: number
+}
+
+interface PersistedRuntimeState {
+  pid: number
+  serviceId: string
+  startedAt?: string
+}
+
+interface PersistedRuntimeStateDocument {
+  items: PersistedRuntimeState[]
 }
 
 function tokenizeProcessArgs(args: string): string[] {
@@ -146,9 +171,28 @@ function createProcessNameCandidates(command: string, processName: string, servi
 function matchesProcessSignature(commandName: string, args: string, command: string, processName: string, serviceArgs: string[] = []): boolean {
   const candidates = createProcessNameCandidates(command, processName, serviceArgs)
   const tokens = tokenizeProcessArgs(args)
+  const expectedTokens = serviceArgs.filter((token) => token !== 'gateway')
 
   if (candidates.includes(commandName)) {
-    return true
+    if (expectedTokens.length === 0) {
+      return true
+    }
+
+    let matched = 0
+    for (const token of tokens) {
+      if (token === expectedTokens[matched]) {
+        matched += 1
+        if (matched === expectedTokens.length) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
+  if (expectedTokens.length > 0) {
+    return false
   }
 
   return tokens.some((token) => token === command || candidates.includes(token))
@@ -345,10 +389,10 @@ function createLogEntry(level: LogLevel, source: LogEntry['source'], message: st
   }
 }
 
-function createDefaultServiceStatus(): ServiceDetail {
+function createDefaultServiceStatus(service?: Pick<ManClawConfig['service'], 'id' | 'label'>): ServiceDetail {
   return {
-    id: 'openclaw',
-    name: 'openclaw',
+    id: service?.id ?? 'openclaw',
+    name: service?.label ?? service?.id ?? 'openclaw',
     status: 'stopped',
     message: 'openclaw process was not detected.',
   }
@@ -542,7 +586,55 @@ function parseJsonObjectFromMixedOutput<T>(output: string): T {
   return JSON.parse(output.slice(startIndex)) as T
 }
 
-function normalizeProcessName(command: string, processName?: string, serviceArgs: string[] = []): string {
+function buildProfileSuffix(profileMode?: ManClawConfig['service']['profileMode'], profileName?: string, serviceId?: string): string {
+  if (profileMode === 'profile' && profileName?.trim()) {
+    return profileName.trim()
+  }
+
+  if (profileMode === 'dev') {
+    return 'dev'
+  }
+
+  if (serviceId?.trim()) {
+    return serviceId.trim()
+  }
+
+  return 'default'
+}
+
+function buildProfileHomeDir(
+  profileMode?: ManClawConfig['service']['profileMode'],
+  profileName?: string,
+  serviceId?: string,
+): string {
+  const homeDir = process.env.HOME ?? ''
+  if (!homeDir) {
+    return `.openclaw-${buildProfileSuffix(profileMode, profileName, serviceId)}`
+  }
+
+  if (profileMode === 'default') {
+    return path.join(homeDir, '.openclaw')
+  }
+
+  return path.join(homeDir, `.openclaw-${buildProfileSuffix(profileMode, profileName, serviceId)}`)
+}
+
+function buildDefaultProfileWorkspace(
+  profileMode?: ManClawConfig['service']['profileMode'],
+  profileName?: string,
+  serviceId?: string,
+): string {
+  return path.join(buildProfileHomeDir(profileMode, profileName, serviceId), 'workspace')
+}
+
+function normalizeProcessName(
+  command: string,
+  processName?: string,
+  serviceArgs: string[] = [],
+  profileMode?: ManClawConfig['service']['profileMode'],
+  profileName?: string,
+  serviceId?: string,
+): string {
   if (processName && processName.trim()) {
     return processName.trim()
   }
@@ -550,10 +642,10 @@ function normalizeProcessName(command: string, processName?: string, serviceArgs
   const commandBaseName = path.basename(command).trim()
   const primaryArg = serviceArgs[0]?.trim()
   if (commandBaseName && primaryArg) {
-    return `${commandBaseName}-${primaryArg}`
+    return `${commandBaseName}-${primaryArg}-${buildProfileSuffix(profileMode, profileName, serviceId)}`
   }
 
-  return commandBaseName
+  return commandBaseName ? `${commandBaseName}-${buildProfileSuffix(profileMode, profileName, serviceId)}` : 'openclaw-default'
 }
 
 function summarizeCommandOutput(text: string): string {
@@ -583,6 +675,7 @@ function expandHomePath(targetPath: string): string {
 function isDefaultServiceBootstrapConfig(config: ManClawConfig): boolean {
   return (
     config.service.command === DEFAULT_CONFIG.service.command &&
+    config.service.profileMode === DEFAULT_CONFIG.service.profileMode &&
     config.service.args.length === 0 &&
     config.service.cwd === DEFAULT_CONFIG.service.cwd &&
     config.service.processName === DEFAULT_CONFIG.service.processName &&
@@ -609,7 +702,7 @@ function parseGatewayStatusOutput(output: string): {
     healthUrl?: string
   } = {}
 
-  if (configPathRaw) {
+  if (configPathRaw && !configPathRaw.includes('(missing)')) {
     result.configPath = expandHomePath(configPathRaw)
   }
 
@@ -640,6 +733,29 @@ function parseGatewayStatusOutput(output: string): {
   return result
 }
 
+function parseOnboardOutput(output: string): {
+  configPath?: string
+  workspace?: string
+} {
+  const configPathRaw = output.match(/^Updated\s+(.+openclaw\.json)$/m)?.[1]?.trim()
+  const workspaceRaw = output.match(/^Workspace OK:\s+(.+)$/m)?.[1]?.trim()
+
+  return {
+    configPath: configPathRaw ? expandHomePath(configPathRaw) : undefined,
+    workspace: workspaceRaw ? expandHomePath(workspaceRaw) : undefined,
+  }
+}
+
+function parseConfigFileOutput(output: string): string | undefined {
+  const normalized = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .find((line) => line.endsWith('openclaw.json'))
+
+  return normalized ? expandHomePath(normalized) : undefined
+}
+
 function parseSkillFrontmatter(content: string): { title?: string; summary?: string } {
   const match = content.match(/^---\s*\n([\s\S]*?)\n---/)
   if (!match) {
@@ -652,22 +768,29 @@ function parseSkillFrontmatter(content: string): { title?: string; summary?: str
   return { title, summary }
 }
 
-function buildServiceArgs(service: ManClawConfig['service']): string[] {
-  const args = [...service.args]
-  const hasExplicitConfig = service.configPath && args.includes(service.configPath)
-
-  if (service.configPath && service.configFlag && !hasExplicitConfig) {
-    if (service.configFlag) {
-      args.push(service.configFlag, service.configPath)
-    } else {
-      args.push(service.configPath)
-    }
+function buildServiceProfileArgs(service: ManClawConfig['service']): string[] {
+  if (service.profileMode === 'dev') {
+    return ['--dev']
   }
 
-  return args
+  if (service.profileMode === 'profile' && service.profileName?.trim()) {
+    return ['--profile', service.profileName.trim()]
+  }
+
+  return []
 }
 
-function buildServiceEnv(service: ManClawConfig['service']): NodeJS.ProcessEnv {
+function buildServicePortArgs(service: ManClawConfig['service']): string[] {
+  return typeof service.port === 'number' && Number.isFinite(service.port) && service.port > 0
+    ? ['--port', String(service.port)]
+    : []
+}
+
+function buildServiceArgs(service: ManClawConfig['service']): string[] {
+  return [...buildServiceProfileArgs(service), ...service.args, ...buildServicePortArgs(service)]
+}
+
+function buildServiceEnv(service: ManClawConfig['service'], options?: { includeConfigPath?: boolean }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
   }
@@ -683,11 +806,259 @@ function buildServiceEnv(service: ManClawConfig['service']): NodeJS.ProcessEnv {
 
   Object.assign(env, service.env)
 
-  if (service.configPath && !service.configFlag) {
+  if (options?.includeConfigPath !== false && service.configPath) {
     env.OPENCLAW_CONFIG_PATH = service.configPath
   }
 
   return env
+}
+
+function extractOpenClawGlobalArgs(serviceArgs: string[]): string[] {
+  const prefix: string[] = []
+
+  for (let index = 0; index < serviceArgs.length; index += 1) {
+    const current = serviceArgs[index]?.trim()
+    if (!current) {
+      continue
+    }
+
+    if (current === '--dev' || current === '--no-color') {
+      prefix.push(current)
+      continue
+    }
+
+    if (current === '--profile' || current === '--log-level') {
+      prefix.push(current)
+      const next = serviceArgs[index + 1]?.trim()
+      if (next) {
+        prefix.push(next)
+        index += 1
+      }
+      continue
+    }
+
+    if (current.startsWith('--profile=') || current.startsWith('--log-level=')) {
+      prefix.push(current)
+      continue
+    }
+
+    break
+  }
+
+  return prefix
+}
+
+function buildOpenClawCliArgs(service: ManClawConfig['service'], commandArgs: string[]): string[] {
+  return [...buildServiceProfileArgs(service), ...extractOpenClawGlobalArgs(service.args), ...commandArgs]
+}
+
+function extractProfileSettings(service: Partial<ManClawConfig['service']>): {
+  profileMode: ManClawConfig['service']['profileMode']
+  profileName?: string
+  args: string[]
+} {
+  const explicitMode = service.profileMode
+  const explicitName = typeof service.profileName === 'string' ? service.profileName.trim() : ''
+  const rawArgs = Array.isArray(service.args) ? service.args.map((item) => item.trim()).filter(Boolean) : []
+
+  if (explicitMode === 'dev') {
+    return {
+      profileMode: 'dev',
+      profileName: undefined,
+      args: rawArgs,
+    }
+  }
+
+  if (explicitMode === 'profile') {
+    return {
+      profileMode: 'profile',
+      profileName: explicitName || undefined,
+      args: rawArgs,
+    }
+  }
+
+  if (rawArgs[0] === '--dev') {
+    return {
+      profileMode: 'dev',
+      profileName: undefined,
+      args: rawArgs.slice(1),
+    }
+  }
+
+  if (rawArgs[0] === '--profile' && rawArgs[1]) {
+    return {
+      profileMode: 'profile',
+      profileName: rawArgs[1],
+      args: rawArgs.slice(2),
+    }
+  }
+
+  if (rawArgs[0]?.startsWith('--profile=')) {
+    return {
+      profileMode: 'profile',
+      profileName: rawArgs[0].slice('--profile='.length) || undefined,
+      args: rawArgs.slice(1),
+    }
+  }
+
+  return {
+    profileMode: 'default',
+    profileName: undefined,
+    args: rawArgs,
+  }
+}
+
+function extractPortSettings(service: Partial<ManClawConfig['service']>): {
+  port?: number
+  args: string[]
+} {
+  const explicitPort = service.port
+  const rawArgs = Array.isArray(service.args) ? service.args.map((item) => item.trim()).filter(Boolean) : []
+
+  if (typeof explicitPort === 'number' && Number.isFinite(explicitPort) && explicitPort > 0) {
+    return {
+      port: explicitPort,
+      args: rawArgs.filter((item, index) => {
+        if (item === '--port') {
+          return false
+        }
+        if (index > 0 && rawArgs[index - 1] === '--port') {
+          return false
+        }
+        return !item.startsWith('--port=')
+      }),
+    }
+  }
+
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const current = rawArgs[index]
+    if (current === '--port') {
+      const next = Number(rawArgs[index + 1])
+      return {
+        port: Number.isFinite(next) && next > 0 ? next : undefined,
+        args: rawArgs.filter((item, itemIndex) => itemIndex !== index && itemIndex !== index + 1),
+      }
+    }
+
+    if (current.startsWith('--port=')) {
+      const parsed = Number(current.slice('--port='.length))
+      return {
+        port: Number.isFinite(parsed) && parsed > 0 ? parsed : undefined,
+        args: rawArgs.filter((_, itemIndex) => itemIndex !== index),
+      }
+    }
+  }
+
+  return {
+    port: undefined,
+    args: rawArgs,
+  }
+}
+
+function normalizeManagedService(
+  candidate: unknown,
+  fallback: ManClawConfig['service'],
+  index = 0,
+): ManClawConfig['service'] {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    throw new Error(`Config.services.items[${index}] must be an object.`)
+  }
+
+  const service = candidate as Partial<ManClawConfig['service']> & { configFlag?: unknown }
+  if (typeof service.command !== 'string' || service.command.trim() === '') {
+    throw new Error(`Config.services.items[${index}].command must be a non-empty string.`)
+  }
+  if (!Array.isArray(service.args) || service.args.some((item) => typeof item !== 'string')) {
+    throw new Error(`Config.services.items[${index}].args must be an array of strings.`)
+  }
+  if (typeof service.cwd !== 'string' || service.cwd.trim() === '') {
+    throw new Error(`Config.services.items[${index}].cwd must be a non-empty string.`)
+  }
+
+  const env = service.env ?? {}
+  if (!env || typeof env !== 'object' || Array.isArray(env)) {
+    throw new Error(`Config.services.items[${index}].env must be an object.`)
+  }
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== 'string') {
+      throw new Error(`Config.services.items[${index}].env.${key} must be a string.`)
+    }
+  }
+
+  const healthcheck = service.healthcheck ?? fallback.healthcheck
+  if (typeof healthcheck !== 'object' || healthcheck === null) {
+    throw new Error(`Config.services.items[${index}].healthcheck must be an object.`)
+  }
+  if (typeof healthcheck.enabled !== 'boolean') {
+    throw new Error(`Config.services.items[${index}].healthcheck.enabled must be a boolean.`)
+  }
+  if (typeof healthcheck.url !== 'string') {
+    throw new Error(`Config.services.items[${index}].healthcheck.url must be a string.`)
+  }
+  if (typeof healthcheck.timeoutMs !== 'number' || !Number.isFinite(healthcheck.timeoutMs) || healthcheck.timeoutMs <= 0) {
+    throw new Error(`Config.services.items[${index}].healthcheck.timeoutMs must be a positive number.`)
+  }
+  if (
+    typeof healthcheck.expectedStatus !== 'number' ||
+    !Number.isFinite(healthcheck.expectedStatus) ||
+    healthcheck.expectedStatus <= 0
+  ) {
+    throw new Error(`Config.services.items[${index}].healthcheck.expectedStatus must be a positive number.`)
+  }
+
+  const id = typeof service.id === 'string' && service.id.trim()
+    ? service.id.trim()
+    : index === 0
+      ? 'default'
+      : `service-${index + 1}`
+  const profileSettings = extractProfileSettings(service)
+  const portSettings = extractPortSettings({
+    ...service,
+    args: profileSettings.args,
+  })
+  const effectivePort = portSettings.port
+  const normalizedHealthUrl = typeof service.healthcheck?.url === 'string' && service.healthcheck.url.trim()
+    ? service.healthcheck.url
+    : effectivePort
+      ? `http://127.0.0.1:${effectivePort}/health`
+      : fallback.healthcheck.url
+
+  return {
+    id,
+    label: typeof service.label === 'string' && service.label.trim() ? service.label.trim() : undefined,
+    profileMode: profileSettings.profileMode,
+    profileName: profileSettings.profileName,
+    command: service.command.trim(),
+    port: effectivePort,
+    args: portSettings.args,
+    cwd: service.cwd.trim(),
+    env: env as Record<string, string>,
+    autoStart: typeof service.autoStart === 'boolean' ? service.autoStart : fallback.autoStart,
+    autoRestart: typeof service.autoRestart === 'boolean' ? service.autoRestart : fallback.autoRestart,
+    processName: normalizeProcessName(
+      service.command.trim(),
+      typeof service.processName === 'string' ? service.processName : undefined,
+      buildServiceArgs({
+        ...fallback,
+        ...service,
+        command: service.command.trim(),
+        profileMode: profileSettings.profileMode,
+        profileName: profileSettings.profileName,
+        port: effectivePort,
+        args: portSettings.args,
+      }),
+      profileSettings.profileMode,
+      profileSettings.profileName,
+      id,
+    ),
+    configPath: typeof service.configPath === 'string' ? service.configPath.trim() : fallback.configPath,
+    healthcheck: {
+      enabled: healthcheck.enabled,
+      url: normalizedHealthUrl,
+      timeoutMs: healthcheck.timeoutMs,
+      expectedStatus: healthcheck.expectedStatus,
+    },
+  }
 }
 
 function normalizeConfig(candidate: unknown): ManClawConfig {
@@ -696,35 +1067,6 @@ function normalizeConfig(candidate: unknown): ManClawConfig {
   }
 
   const config = candidate as Partial<ManClawConfig>
-  const service = config.service
-
-  if (!service || typeof service !== 'object') {
-    throw new Error('Config.service is required.')
-  }
-
-  if (typeof service.command !== 'string' || service.command.trim() === '') {
-    throw new Error('Config.service.command must be a non-empty string.')
-  }
-
-  if (!Array.isArray(service.args) || service.args.some((item) => typeof item !== 'string')) {
-    throw new Error('Config.service.args must be an array of strings.')
-  }
-
-  if (typeof service.cwd !== 'string' || service.cwd.trim() === '') {
-    throw new Error('Config.service.cwd must be a non-empty string.')
-  }
-
-  const env = service.env ?? {}
-  if (!env || typeof env !== 'object' || Array.isArray(env)) {
-    throw new Error('Config.service.env must be an object.')
-  }
-
-  for (const [key, value] of Object.entries(env)) {
-    if (typeof value !== 'string') {
-      throw new Error(`Config.service.env.${key} must be a string.`)
-    }
-  }
-
   const shell = config.shell ?? { timeoutMs: 10_000 }
   if (typeof shell !== 'object' || shell === null) {
     throw new Error('Config.shell must be an object.')
@@ -753,54 +1095,30 @@ function normalizeConfig(candidate: unknown): ManClawConfig {
     throw new Error('Config.ui.restartNotice is invalid.')
   }
 
-  const healthcheck = service.healthcheck ?? {
-    enabled: false,
-    url: 'http://127.0.0.1:8080/health',
-    timeoutMs: 3_000,
-    expectedStatus: 200,
-  }
+  const legacyServiceCandidate = config.service ?? DEFAULT_CONFIG.service
+  const normalizedLegacyService = normalizeManagedService(legacyServiceCandidate, DEFAULT_CONFIG.service)
+  const servicesCandidate = (config as Partial<ManClawConfig> & { services?: { items?: unknown } }).services
+  const rawItems = Array.isArray(servicesCandidate?.items) && servicesCandidate.items.length > 0
+    ? servicesCandidate.items
+    : [legacyServiceCandidate]
+  const normalizedItems = rawItems.map((item, index) =>
+    normalizeManagedService(item, index === 0 ? normalizedLegacyService : normalizedLegacyService, index),
+  )
+  const seenServiceIds = new Set<string>()
+  normalizedItems.forEach((item) => {
+    if (seenServiceIds.has(item.id)) {
+      throw new Error(`Config.services.items contains duplicated id "${item.id}".`)
+    }
+    seenServiceIds.add(item.id)
+  })
 
-  if (typeof healthcheck !== 'object' || healthcheck === null) {
-    throw new Error('Config.service.healthcheck must be an object.')
-  }
-
-  if (typeof healthcheck.enabled !== 'boolean') {
-    throw new Error('Config.service.healthcheck.enabled must be a boolean.')
-  }
-
-  if (typeof healthcheck.url !== 'string') {
-    throw new Error('Config.service.healthcheck.url must be a string.')
-  }
-
-  if (typeof healthcheck.timeoutMs !== 'number' || !Number.isFinite(healthcheck.timeoutMs) || healthcheck.timeoutMs <= 0) {
-    throw new Error('Config.service.healthcheck.timeoutMs must be a positive number.')
-  }
-
-  if (typeof healthcheck.expectedStatus !== 'number' || !Number.isFinite(healthcheck.expectedStatus) || healthcheck.expectedStatus <= 0) {
-    throw new Error('Config.service.healthcheck.expectedStatus must be a positive number.')
-  }
+  const requestedActiveId = normalizedLegacyService.id
+  const activeService = normalizedItems.find((item) => item.id === requestedActiveId) ?? normalizedItems[0]
 
   return {
-    service: {
-      command: service.command,
-      args: service.args,
-      cwd: service.cwd,
-      env: env as Record<string, string>,
-      autoStart: Boolean(service.autoStart),
-      autoRestart: typeof service.autoRestart === 'boolean' ? service.autoRestart : true,
-      processName: normalizeProcessName(
-        service.command,
-        typeof service.processName === 'string' ? service.processName : undefined,
-        service.args,
-      ),
-      configPath: typeof service.configPath === 'string' ? service.configPath : '',
-      configFlag: typeof service.configFlag === 'string' ? service.configFlag : '',
-      healthcheck: {
-        enabled: healthcheck.enabled,
-        url: healthcheck.url,
-        timeoutMs: healthcheck.timeoutMs,
-        expectedStatus: healthcheck.expectedStatus,
-      },
+    service: activeService,
+    services: {
+      items: normalizedItems,
     },
     shell: {
       timeoutMs,
@@ -827,9 +1145,10 @@ async function readJsonFile<T>(targetPath: string): Promise<T> {
 export class ManClawManager {
   private readonly rootDir: string
   private readonly paths: ManagerPaths
-  private readonly serviceState: ServiceState
+  private readonly serviceStates = new Map<string, ServiceState>()
   private readonly executions = new Map<string, ShellExecutionRecord>()
   private readonly skillDetailCache = new Map<string, CachedSkillDetail>()
+  private readonly gatewayStatusCache = new Map<string, GatewayStatusCacheEntry>()
 
   constructor(rootDir: string) {
     this.rootDir = rootDir
@@ -839,10 +1158,7 @@ export class ManClawManager {
       revisionsDir: path.join(rootDir, '.manclaw', 'revisions'),
       runtimeLogPath: path.join(rootDir, '.manclaw', 'runtime.log.jsonl'),
       auditLogPath: path.join(rootDir, '.manclaw', 'audit.log.jsonl'),
-    }
-    this.serviceState = {
-      status: createDefaultServiceStatus(),
-      stopRequested: false,
+      runtimeStatePath: path.join(rootDir, '.manclaw', 'runtime-state.json'),
     }
   }
 
@@ -856,23 +1172,39 @@ export class ManClawManager {
 
     await this.appendRuntimeLog('info', 'manclaw manager initialized')
     await this.bootstrapFromGatewayStatus()
+    await this.restoreManagedRuntimeState()
 
     const config = await this.readConfigModel()
-    if (config.service.autoStart) {
-      await this.startService()
+    const services = config.services.items.length > 0 ? config.services.items : [config.service]
+    for (const service of services) {
+      if (!service.autoStart) {
+        continue
+      }
+
+      const scopedConfig: ManClawConfig = {
+        ...config,
+        service,
+      }
+      await this.startService(scopedConfig).catch(() => undefined)
     }
   }
 
   async getHealthSnapshot(): Promise<HealthSnapshot> {
+    const services = await this.getServiceStatuses()
     return {
       generatedAt: nowIso(),
-      services: [await this.getServiceSummary()],
+      services: services.map((service) => ({
+        id: service.id,
+        name: service.name,
+        status: service.status,
+        message: service.message,
+      })),
     }
   }
 
   async getSystemSummary(): Promise<SystemSummary> {
     return {
-      services: [await this.getServiceSummary()],
+      services: await this.getServiceSummaries(),
     }
   }
 
@@ -886,115 +1218,165 @@ export class ManClawManager {
     }
   }
 
+  async getServiceSummaries(): Promise<ServiceSummary[]> {
+    const services = await this.getServiceStatuses()
+    return services.map((service) => ({
+      id: service.id,
+      name: service.name,
+      status: service.status,
+      message: service.message,
+    }))
+  }
+
   async getServiceStatus(): Promise<ServiceDetail> {
     const config = await this.readConfigModel()
-    const current = this.serviceState.status
-    const runningProcess = await this.findRunningProcess(config)
-    const processTiming = runningProcess ? await this.readProcessTiming(config, runningProcess.pid) : undefined
+    return this.readServiceStatus(config, config.service)
+  }
+
+  async getServiceStatuses(): Promise<ServiceDetail[]> {
+    const config = await this.readConfigModel()
+    const services = config.services.items.length > 0 ? config.services.items : [config.service]
+    const results: ServiceDetail[] = []
+
+    for (const item of services) {
+      results.push(await this.readServiceStatus(config, item))
+    }
+
+    return results
+  }
+
+  private async readServiceStatus(
+    config: ManClawConfig,
+    service: ManClawConfig['service'],
+  ): Promise<ServiceDetail> {
+    const state = this.getServiceState(service)
+    const current = state.status
+    const scopedConfig: ManClawConfig = {
+      ...config,
+      service,
+    }
+    const runningProcess = await this.findRunningProcess(scopedConfig, { serviceId: service.id, useManagedChild: true })
+    const processTiming = runningProcess ? await this.readProcessTiming(scopedConfig, runningProcess.pid) : undefined
     const health: HealthProbeResult = runningProcess
-      ? await this.probeHealth(config)
+      ? await this.probeHealth(scopedConfig)
       : { status: 'disabled', message: 'Health check skipped because no process was found.' }
     const uptimeSeconds =
       processTiming?.uptimeSeconds ??
       (current.startedAt && runningProcess && current.pid === runningProcess.pid
         ? Math.max(0, Math.floor((Date.now() - new Date(current.startedAt).getTime()) / 1000))
         : undefined)
-    const args = buildServiceArgs(config.service)
-    const cwd = path.resolve(this.rootDir, config.service.cwd)
+    const args = buildServiceArgs(service)
+    const cwd = path.resolve(this.rootDir, service.cwd)
+    const needsBootstrap = await this.serviceNeedsProfileBootstrap(service)
 
-    if (!runningProcess) {
-      this.serviceState.status = {
-        ...current,
-        status: 'stopped',
-        pid: undefined,
-        message: `No running ${config.service.processName} process detected.`,
-      }
-    } else {
-      this.serviceState.status = {
-        ...current,
-        status: health.status === 'failing' ? 'degraded' : 'running',
-        pid: runningProcess.pid,
-        message:
-          health.status === 'failing'
-            ? `Process detected but health check failed: ${health.message}`
-            : health.status === 'passing'
-              ? `Process detected and health check passed: ${health.message}`
-              : runningProcess.managerName
-                ? `Process detected by ${runningProcess.detectedBy} (${runningProcess.managerName}).`
-                : `Process detected by ${runningProcess.detectedBy}.`,
-        command: config.service.command,
-        args,
-        cwd,
-        processName: config.service.processName,
-        configPath: config.service.configPath,
-        healthUrl: config.service.healthcheck.url,
-        healthStatus: health.status,
-        detectedBy: runningProcess.detectedBy,
-        managerName: runningProcess.managerName,
-        startedAt:
-          (runningProcess.detectedBy === 'managed' ? current.startedAt : undefined) ??
-          runningProcess.startedAt ??
-          processTiming?.startedAt,
-      }
-    }
+    const nextStatus: ServiceDetail = !runningProcess
+      ? {
+          ...current,
+          id: service.id,
+          name: service.label ?? service.id,
+          status: 'stopped',
+          pid: undefined,
+          message: needsBootstrap
+            ? `Profile ${service.id} 尚未初始化，启动时会先执行 OpenClaw onboard。`
+            : `No running ${service.processName} process detected.`,
+        }
+      : {
+          ...current,
+          id: service.id,
+          name: service.label ?? service.id,
+          status: health.status === 'failing' ? 'degraded' : 'running',
+          pid: runningProcess.pid,
+          message:
+            health.status === 'failing'
+              ? `Process detected but health check failed: ${health.message}`
+              : health.status === 'passing'
+                ? `Process detected and health check passed: ${health.message}`
+                : runningProcess.managerName
+                  ? `Process detected by ${runningProcess.detectedBy} (${runningProcess.managerName}).`
+                  : `Process detected by ${runningProcess.detectedBy}.`,
+          command: service.command,
+          args,
+          cwd,
+          processName: service.processName,
+          configPath: service.configPath,
+          healthUrl: service.healthcheck.url,
+          healthStatus: health.status,
+          detectedBy: runningProcess.detectedBy,
+          managerName: runningProcess.managerName,
+          startedAt:
+            (runningProcess.detectedBy === 'managed' ? current.startedAt : undefined) ??
+            runningProcess.startedAt ??
+            processTiming?.startedAt,
+        }
+
+    state.status = nextStatus
 
     return {
-      ...this.serviceState.status,
-      command: config.service.command,
+      ...nextStatus,
+      id: service.id,
+      name: service.label ?? service.id,
+      command: service.command,
       args,
       cwd,
       uptimeSeconds,
-      processName: config.service.processName,
-      configPath: config.service.configPath,
-      healthUrl: config.service.healthcheck.url,
+      processName: service.processName,
+      configPath: service.configPath,
+      healthUrl: service.healthcheck.url,
       healthStatus: runningProcess ? health.status : 'disabled',
       detectedBy: runningProcess?.detectedBy,
       managerName: runningProcess?.managerName,
     }
   }
 
-  async startService(): Promise<ServiceDetail> {
-    const config = await this.readConfigModel()
-    const existingProcess = await this.findRunningProcess(config)
+  async startService(configOverride?: ManClawConfig): Promise<ServiceDetail> {
+    let config = configOverride ?? await this.readConfigModel()
+    config = await this.ensureCurrentServiceReady(config)
+    const state = this.getServiceState(config.service)
+    const existingProcess = await this.findRunningProcess(config, { serviceId: config.service.id, useManagedChild: true })
     if (existingProcess) {
-      this.serviceState.status = {
-        ...this.serviceState.status,
+      await this.saveRuntimeState(config.service.id, {
+        pid: existingProcess.pid,
+        serviceId: config.service.id,
+        startedAt: state.status.startedAt ?? nowIso(),
+      })
+      state.status = {
+        ...state.status,
         status: 'running',
         pid: existingProcess.pid,
         message: `openclaw is already running with PID ${existingProcess.pid}.`,
       }
-      return this.getServiceStatus()
+      return this.readServiceStatus(config, config.service)
     }
 
     const cwd = path.resolve(this.rootDir, config.service.cwd)
     const args = buildServiceArgs(config.service)
-    this.serviceState.stopRequested = false
+    state.stopRequested = false
     const child = spawn(config.service.command, args, {
       cwd,
       env: buildServiceEnv(config.service),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
-    this.attachChildListeners(child)
+    this.attachChildListeners(config.service, child)
     const spawnResult = await new Promise<{ ok: true } | { ok: false; error: Error }>((resolve) => {
       child.once('spawn', () => resolve({ ok: true }))
       child.once('error', (error) => resolve({ ok: false, error }))
     })
 
     if (!spawnResult.ok) {
-      this.serviceState.child = undefined
-      this.serviceState.status = {
-        ...this.serviceState.status,
+      state.child = undefined
+      state.status = {
+        ...state.status,
         status: 'degraded',
         message: spawnResult.error.message,
       }
       throw spawnResult.error
     }
 
-    this.serviceState.child = child
-    this.serviceState.status = {
-      id: 'openclaw',
-      name: 'openclaw',
+    state.child = child
+    state.status = {
+      id: config.service.id,
+      name: config.service.label ?? config.service.id,
       status: 'running',
       message: 'openclaw process started successfully.',
       startedAt: nowIso(),
@@ -1008,49 +1390,59 @@ export class ManClawManager {
       healthStatus: config.service.healthcheck.enabled ? 'failing' : 'disabled',
       detectedBy: 'managed',
     }
+    if (child.pid) {
+      await this.saveRuntimeState(config.service.id, {
+        pid: child.pid,
+        serviceId: config.service.id,
+        startedAt: state.status.startedAt,
+      })
+    }
 
     await this.appendAuditLog(`service.start pid=${child.pid ?? 'unknown'}`)
     await this.appendRuntimeLog('info', `openclaw process started with command ${config.service.command}`)
 
-    return this.getServiceStatus()
+    return this.readServiceStatus(config, config.service)
   }
 
-  async stopService(): Promise<ServiceDetail> {
-    const config = await this.readConfigModel()
-    const child = this.serviceState.child
-    this.serviceState.stopRequested = true
-    if (this.serviceState.restartTimer) {
-      clearTimeout(this.serviceState.restartTimer)
-      this.serviceState.restartTimer = undefined
+  async stopService(configOverride?: ManClawConfig): Promise<ServiceDetail> {
+    const config = configOverride ?? await this.readConfigModel()
+    const state = this.getServiceState(config.service)
+    const child = state.child
+    state.stopRequested = true
+    if (state.restartTimer) {
+      clearTimeout(state.restartTimer)
+      state.restartTimer = undefined
     }
 
     if (child && !child.killed && child.pid) {
       await this.terminatePid(child.pid)
-      this.serviceState.child = undefined
-      this.serviceState.status = {
-        ...this.serviceState.status,
+      state.child = undefined
+      await this.clearRuntimeState(config.service.id)
+      state.status = {
+        ...state.status,
         status: 'stopped',
         message: 'Managed openclaw process stopped.',
         pid: undefined,
       }
       await this.appendAuditLog(`service.stop pid=${child.pid}`)
       await this.appendRuntimeLog('warn', 'managed openclaw process stopped')
-      return this.getServiceStatus()
+      return this.readServiceStatus(config, config.service)
     }
 
-    const externalProcess = await this.findRunningProcess(config)
+    const externalProcess = await this.findRunningProcess(config, { serviceId: config.service.id, useManagedChild: true })
     if (!externalProcess) {
-      this.serviceState.status = {
-        ...this.serviceState.status,
+      state.status = {
+        ...state.status,
         status: 'stopped',
         message: 'openclaw is not running.',
       }
-      return this.getServiceStatus()
+      return this.readServiceStatus(config, config.service)
     }
 
     await this.terminatePid(externalProcess.pid)
-    this.serviceState.status = {
-      ...this.serviceState.status,
+    await this.clearRuntimeState(config.service.id)
+    state.status = {
+      ...state.status,
       status: 'stopped',
       message: `External openclaw process ${externalProcess.pid} stopped.`,
       pid: undefined,
@@ -1058,20 +1450,45 @@ export class ManClawManager {
     await this.appendAuditLog(`service.stop pid=${externalProcess.pid}`)
     await this.appendRuntimeLog('warn', `external openclaw process ${externalProcess.pid} stopped`)
 
-    return this.getServiceStatus()
+    return this.readServiceStatus(config, config.service)
   }
 
-  async restartService(): Promise<ServiceDetail> {
-    await this.stopService()
-    return this.startService()
+  async restartService(configOverride?: ManClawConfig): Promise<ServiceDetail> {
+    const config = configOverride ?? await this.readConfigModel()
+    await this.stopService(config)
+    return this.startService(config)
   }
 
   async getManagerSettings(): Promise<ManagerSettingsDocument> {
     const fileStat = await stat(this.paths.configPath)
+    let config = await this.readConfigModel()
+    config = await this.ensureCurrentServiceConfigPath(config)
+    const currentWorkspace = await this.readWorkspaceFromCurrentConfig(config)
+    const currentService = currentWorkspace
+      ? {
+          ...config.service,
+          cwd: currentWorkspace,
+        }
+      : config.service
+
     return {
       path: this.paths.configPath,
       updatedAt: fileStat.mtime.toISOString(),
-      config: await this.readConfigModel(),
+      config: {
+        ...config,
+        service: currentService,
+        services: {
+          ...config.services,
+          items: config.services.items.map((item) =>
+            item.id === currentService.id
+              ? {
+                  ...item,
+                  cwd: currentService.cwd,
+                }
+              : item,
+          ),
+        },
+      },
     }
   }
 
@@ -1080,6 +1497,131 @@ export class ManClawManager {
     await writeFile(this.paths.configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8')
     await this.appendAuditLog(`manager.settings.save path=${this.paths.configPath}`)
     await this.appendRuntimeLog('info', `manager settings saved to ${this.paths.configPath}`)
+    return this.getManagerSettings()
+  }
+
+  async createProfile(candidate: CreateProfilePayload): Promise<ManagerSettingsDocument> {
+    const nextId = candidate.id.trim()
+    if (!nextId) {
+      throw new Error('Profile id is required.')
+    }
+
+    const config = await this.readConfigModel()
+    const profiles = config.services.items.length > 0 ? [...config.services.items] : [config.service]
+    if (profiles.some((item) => item.id === nextId)) {
+      throw new Error(`Profile ${nextId} 已存在。`)
+    }
+
+    if (candidate.port !== undefined && (!Number.isInteger(candidate.port) || candidate.port <= 0)) {
+      throw new Error('端口必须是正整数。')
+    }
+
+    const baseService = config.service
+    const sourceId = candidate.sourceId?.trim()
+    const workspaceSourceId = candidate.workspaceSourceId?.trim()
+    if (sourceId && workspaceSourceId) {
+      throw new Error('复制 Profile 与共享 workspace 不能同时启用。')
+    }
+
+    const sourceService = sourceId
+      ? profiles.find((item) => item.id === sourceId)
+      : undefined
+    if (sourceId && !sourceService) {
+      throw new Error(`Source profile ${sourceId} 不存在。`)
+    }
+
+    const workspaceSourceService = workspaceSourceId
+      ? profiles.find((item) => item.id === workspaceSourceId)
+      : undefined
+    if (workspaceSourceId && !workspaceSourceService) {
+      throw new Error(`Workspace source profile ${workspaceSourceId} 不存在。`)
+    }
+
+    const nextPort = candidate.port ?? this.suggestNextServicePort(profiles)
+    const nextWorkspace = workspaceSourceService
+      ? (await this.readWorkspaceForService(workspaceSourceService)) ?? workspaceSourceService.cwd
+      : buildDefaultProfileWorkspace('profile', nextId, nextId)
+    const nextService = normalizeManagedService(
+      {
+        ...baseService,
+        id: nextId,
+        label: nextId,
+        profileMode: 'profile',
+        profileName: nextId,
+        port: nextPort,
+        args: [...baseService.args],
+        cwd: nextWorkspace,
+        processName: `openclaw-gateway-${nextId}`,
+        configPath: '',
+        autoStart: false,
+        healthcheck: {
+          ...baseService.healthcheck,
+          url: `http://127.0.0.1:${nextPort}/health`,
+        },
+      },
+      baseService,
+      profiles.length,
+    )
+
+    let initializedService = await this.initializeServiceProfile(config, nextService)
+    if (sourceService) {
+      initializedService = await this.copyProfileState(config, sourceService, initializedService)
+    }
+    const nextConfig = normalizeConfig({
+      ...config,
+      services: {
+        items: [...profiles, initializedService],
+      },
+    })
+
+    await writeFile(this.paths.configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8')
+    await this.appendAuditLog(`manager.profiles.create id=${nextId} port=${nextPort}`)
+    await this.appendRuntimeLog('info', `profile initialized: ${nextId}`)
+    return this.getManagerSettings()
+  }
+
+  async deleteProfile(candidate: DeleteProfilePayload): Promise<ManagerSettingsDocument> {
+    const profileId = candidate.id.trim()
+    if (!profileId) {
+      throw new Error('Profile id is required.')
+    }
+
+    const config = await this.readConfigModel()
+    const profiles = config.services.items.length > 0 ? [...config.services.items] : [config.service]
+    const target = profiles.find((item) => item.id === profileId)
+    if (!target) {
+      throw new Error(`Profile ${profileId} 不存在。`)
+    }
+
+    const remaining = profiles.filter((item) => item.id !== profileId)
+    if (remaining.length === 0) {
+      throw new Error('至少保留一个 Profile。')
+    }
+
+    const targetScopedConfig: ManClawConfig = {
+      ...config,
+      service: target,
+    }
+    if (await this.findRunningProcess(targetScopedConfig, { serviceId: target.id, useManagedChild: true })) {
+      await this.stopService(targetScopedConfig).catch(() => undefined)
+    }
+
+    if (candidate.removeWorkspace) {
+      await this.deleteProfileWorkspace(target, remaining)
+    }
+
+    const nextCurrentService = config.service.id === profileId ? remaining[0] : config.service
+    const nextConfig = normalizeConfig({
+      ...config,
+      service: nextCurrentService,
+      services: {
+        items: remaining,
+      },
+    })
+
+    await writeFile(this.paths.configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8')
+    await this.appendAuditLog(`manager.profiles.delete id=${profileId} removeWorkspace=${candidate.removeWorkspace ? 'yes' : 'no'}`)
+    await this.appendRuntimeLog('info', `profile deleted: ${profileId}`)
     return this.getManagerSettings()
   }
 
@@ -1141,7 +1683,10 @@ export class ManClawManager {
   async saveAgentConfig(candidate: AgentConfigPayload): Promise<AgentConfigDocument> {
     const document = await this.getCurrentConfig()
     const config = JSON.parse(document.content) as Record<string, unknown>
-    const nextConfig = this.applyAgentConfig(config, candidate)
+    await this.ensureAgentWorkspaces(config, candidate)
+    const refreshedDocument = await this.getCurrentConfig()
+    const refreshedConfig = JSON.parse(refreshedDocument.content) as Record<string, unknown>
+    const nextConfig = this.applyAgentConfig(refreshedConfig, candidate)
     await this.saveConfig(`${JSON.stringify(nextConfig, null, 2)}\n`, `Agent setup: ${candidate.defaultAgentId.trim()}`)
     return this.getAgentConfig()
   }
@@ -1297,11 +1842,11 @@ export class ManClawManager {
     const command = config.service.command.trim() || 'openclaw'
 
     try {
-      const { stdout, stderr } = await execFileAsync(command, ['plugins', 'list', '--json'], {
+      const { stdout, stderr } = await execFileAsync(command, buildOpenClawCliArgs(config.service, ['plugins', 'list', '--json']), {
         cwd: workspaceDir,
         timeout: 30_000,
         maxBuffer: 1024 * 1024 * 16,
-        env: process.env,
+        env: buildServiceEnv(config.service),
       })
       const payload = parseJsonObjectFromMixedOutput<{
         workspaceDir?: string
@@ -1374,11 +1919,11 @@ export class ManClawManager {
     const command = config.service.command.trim() || 'openclaw'
 
     try {
-      const { stdout, stderr } = await execFileAsync(command, ['plugins', 'info', normalizedPluginId, '--json'], {
+      const { stdout, stderr } = await execFileAsync(command, buildOpenClawCliArgs(config.service, ['plugins', 'info', normalizedPluginId, '--json']), {
         cwd: workspaceDir,
         timeout: 30_000,
         maxBuffer: 1024 * 1024 * 16,
-        env: process.env,
+        env: buildServiceEnv(config.service),
       })
       const plugin = parseJsonObjectFromMixedOutput<{
         id?: string
@@ -1486,11 +2031,11 @@ export class ManClawManager {
     const action = enabled ? 'enable' : 'disable'
 
     try {
-      const { stdout, stderr } = await execFileAsync(command, ['plugins', action, trimmedPluginId], {
+      const { stdout, stderr } = await execFileAsync(command, buildOpenClawCliArgs(config.service, ['plugins', action, trimmedPluginId]), {
         cwd: workspaceDir,
         timeout: Math.max(config.shell.timeoutMs, 120_000),
         maxBuffer: 1024 * 1024 * 16,
-        env: process.env,
+        env: buildServiceEnv(config.service),
       })
 
       const output = summarizeCommandOutput(`${stdout}${stderr}`)
@@ -1584,11 +2129,11 @@ export class ManClawManager {
     const managedEntriesBySlug = new Map(managedEntries.map((item) => [item.slug, item]))
 
     try {
-      const { stdout, stderr } = await execFileAsync(command, ['skills', 'list', '--json'], {
+      const { stdout, stderr } = await execFileAsync(command, buildOpenClawCliArgs(config.service, ['skills', 'list', '--json']), {
         cwd: workspaceDir,
         timeout: 30_000,
         maxBuffer: 1024 * 1024 * 16,
-        env: process.env,
+        env: buildServiceEnv(config.service),
       })
       const payload = parseJsonObjectFromMixedOutput<{
         workspaceDir?: string
@@ -2006,7 +2551,7 @@ export class ManClawManager {
 
   async getCurrentConfig(): Promise<ConfigDocument> {
     const config = await this.readConfigModel()
-    const targetPath = this.resolveServiceConfigPath(config)
+    const targetPath = await this.resolveServiceConfigPath(config)
     const fileStat = await stat(targetPath)
     return {
       format: 'json',
@@ -2041,7 +2586,7 @@ export class ManClawManager {
     }
 
     const config = await this.readConfigModel()
-    const targetPath = this.resolveServiceConfigPath(config)
+    const targetPath = await this.resolveServiceConfigPath(config)
     const revisionId = await this.createConfigRevisionSnapshot(targetPath, comment)
 
     await writeFile(targetPath, content.endsWith('\n') ? content : `${content}\n`, 'utf8')
@@ -2074,7 +2619,7 @@ export class ManClawManager {
     }
 
     const config = await this.readConfigModel()
-    const targetPath = this.resolveServiceConfigPath(config)
+    const targetPath = await this.resolveServiceConfigPath(config)
     const revision = await readJsonFile<ConfigRevisionFile>(revisionPath)
     const backupRevisionId = await this.createConfigRevisionSnapshot(targetPath, `Before rollback to ${revisionId}`)
     await writeFile(targetPath, revision.content.endsWith('\n') ? revision.content : `${revision.content}\n`, 'utf8')
@@ -2228,12 +2773,16 @@ export class ManClawManager {
         case 'openclaw.doctor-fix': {
           const config = await this.readConfigModel()
           const cwd = path.resolve(this.rootDir, config.service.cwd)
-          const { stdout, stderr } = await execFileAsync(config.service.command, ['doctor', '--fix'], {
+          const { stdout, stderr } = await execFileAsync(
+            config.service.command,
+            buildOpenClawCliArgs(config.service, ['doctor', '--fix']),
+            {
             cwd,
             env: buildServiceEnv(config.service),
             timeout: Math.max(config.shell.timeoutMs, 60_000),
             maxBuffer: 1024 * 1024 * 8,
-          })
+            },
+          )
           record.output = `${stdout}${stderr}`.trim() || 'openclaw doctor --fix completed with no output.'
           record.exitCode = 0
           break
@@ -2318,16 +2867,13 @@ export class ManClawManager {
     }
 
     try {
-      const { stdout, stderr } = await execFileAsync('openclaw', ['gateway', 'status'], {
-        cwd: this.rootDir,
-        timeout: config.shell.timeoutMs,
-        env: {
-          ...process.env,
-          ...config.service.env,
-        },
-      })
+      const { stdout, stderr } = await this.runOpenClawGatewayStatus(config, config.service)
       const output = `${stdout}\n${stderr}`.trim()
       const discovered = parseGatewayStatusOutput(output)
+      const discoveredPortSettings = extractPortSettings({
+        args: discovered.args,
+        port: discovered.port,
+      })
 
       if (!discovered.configPath && !discovered.port && (!discovered.args || discovered.args.length === 0)) {
         return
@@ -2337,15 +2883,60 @@ export class ManClawManager {
         ...config,
         service: {
           ...config.service,
-          command: 'openclaw',
-          args: discovered.args?.length ? discovered.args : config.service.args,
-          cwd: discovered.configPath ? await this.deriveWorkspaceFromConfigPath(discovered.configPath, config.service.cwd) : config.service.cwd,
+          id: config.service.id,
+          label: config.service.label,
+          command: config.service.command,
+          port: discoveredPortSettings.port ?? config.service.port,
+          args: discoveredPortSettings.args.length > 0 ? discoveredPortSettings.args : config.service.args,
+          cwd: config.service.cwd,
           configPath: discovered.configPath ?? config.service.configPath,
-          processName: normalizeProcessName('openclaw', config.service.processName, discovered.args ?? config.service.args),
+          processName: normalizeProcessName(
+            config.service.command,
+            config.service.processName,
+            buildServiceArgs({
+              ...config.service,
+              port: discoveredPortSettings.port ?? config.service.port,
+              args: discoveredPortSettings.args.length > 0 ? discoveredPortSettings.args : config.service.args,
+            }),
+            config.service.profileMode,
+            config.service.profileName,
+            config.service.id,
+          ),
           healthcheck: {
             ...config.service.healthcheck,
             url: discovered.healthUrl ?? config.service.healthcheck.url,
           },
+        },
+        services: {
+          ...config.services,
+          items: config.services.items.map((item) =>
+            item.id === config.service.id
+              ? {
+                  ...item,
+                  command: config.service.command,
+                  port: discoveredPortSettings.port ?? item.port,
+                  args: discoveredPortSettings.args.length > 0 ? discoveredPortSettings.args : item.args,
+                  cwd: item.cwd,
+                  configPath: discovered.configPath ?? item.configPath,
+                  processName: normalizeProcessName(
+                    item.command,
+                    item.processName,
+                    buildServiceArgs({
+                      ...item,
+                      port: discoveredPortSettings.port ?? item.port,
+                      args: discoveredPortSettings.args.length > 0 ? discoveredPortSettings.args : item.args,
+                    }),
+                    item.profileMode,
+                    item.profileName,
+                    item.id,
+                  ),
+                  healthcheck: {
+                    ...item.healthcheck,
+                    url: discovered.healthUrl ?? item.healthcheck.url,
+                  },
+                }
+              : item,
+          ),
         },
       }
 
@@ -2359,27 +2950,16 @@ export class ManClawManager {
     }
   }
 
-  private async deriveWorkspaceFromConfigPath(configPath: string, fallbackCwd: string): Promise<string> {
-    try {
-      const raw = await readFile(configPath, 'utf8')
-      const parsed = JSON.parse(raw) as { agents?: { defaults?: { workspace?: unknown } } }
-      const workspace = parsed.agents?.defaults?.workspace
-      return typeof workspace === 'string' && workspace.trim() ? workspace.trim() : fallbackCwd
-    } catch {
-      return fallbackCwd
-    }
-  }
-
   private async getAgentSessionStoreInfo(agentId: string): Promise<{ path: string; count: number }> {
     const config = await this.readConfigModel()
     const command = config.service.command.trim() || 'openclaw'
 
     try {
-      const { stdout, stderr } = await execFileAsync(command, ['sessions', '--agent', agentId, '--json'], {
+      const { stdout, stderr } = await execFileAsync(command, buildOpenClawCliArgs(config.service, ['sessions', '--agent', agentId, '--json']), {
         cwd: this.rootDir,
         timeout: 30_000,
         maxBuffer: 1024 * 1024 * 8,
-        env: process.env,
+        env: buildServiceEnv(config.service),
       })
       const payload = parseJsonObjectFromMixedOutput<{
         path?: string
@@ -2608,7 +3188,229 @@ export class ManClawManager {
     )
   }
 
-  private resolveServiceConfigPath(config: ManClawConfig): string {
+  private async runOpenClawGatewayStatus(
+    config: ManClawConfig,
+    service: ManClawConfig['service'],
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+    const cwd = path.resolve(this.rootDir, service.cwd)
+
+    return new Promise((resolve, reject) => {
+      const child = spawn(
+        service.command,
+        buildOpenClawCliArgs(service, ['gateway', 'status']),
+        {
+          cwd,
+          env: buildServiceEnv(service, { includeConfigPath: false }),
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: true,
+        },
+      )
+
+      let stdout = ''
+      let stderr = ''
+      let settled = false
+
+      const cleanup = (): void => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle)
+        }
+      }
+
+      const forceKillGroup = (): void => {
+        if (!child.pid) {
+          return
+        }
+
+        try {
+          process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // Ignore cleanup errors.
+          }
+        }
+      }
+
+      const timeoutHandle = setTimeout(() => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        forceKillGroup()
+        cleanup()
+        reject(new Error('openclaw gateway status timed out.'))
+      }, config.shell.timeoutMs)
+
+      child.stdout?.setEncoding('utf8')
+      child.stderr?.setEncoding('utf8')
+      child.stdout?.on('data', (chunk: string) => {
+        stdout += chunk
+      })
+      child.stderr?.on('data', (chunk: string) => {
+        stderr += chunk
+      })
+
+      child.once('error', (error) => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        forceKillGroup()
+        cleanup()
+        reject(error)
+      })
+
+      child.once('close', (code) => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        forceKillGroup()
+        cleanup()
+        resolve({ stdout, stderr, exitCode: code })
+      })
+    })
+  }
+
+  private async discoverGatewayStatus(
+    config: ManClawConfig,
+    service: ManClawConfig['service'],
+  ): Promise<ReturnType<typeof parseGatewayStatusOutput>> {
+    try {
+      const { stdout, stderr } = await this.runOpenClawGatewayStatus(config, service)
+      const value = parseGatewayStatusOutput(`${stdout}\n${stderr}`.trim())
+      this.gatewayStatusCache.set(service.id, {
+        value,
+        cachedAt: Date.now(),
+      })
+      return value
+    } catch {
+      return {}
+    }
+  }
+
+  private async discoverConfigPathViaCli(service: ManClawConfig['service']): Promise<string | undefined> {
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        service.command.trim() || 'openclaw',
+        buildOpenClawCliArgs(service, ['config', 'file']),
+        {
+          cwd: this.rootDir,
+          env: buildServiceEnv(
+            {
+              ...service,
+              configPath: '',
+            },
+            { includeConfigPath: false },
+          ),
+          timeout: 10_000,
+        },
+      )
+
+      return parseConfigFileOutput(`${stdout}\n${stderr}`.trim())
+    } catch {
+      return undefined
+    }
+  }
+
+  private readCachedGatewayStatus(service: ManClawConfig['service']): ReturnType<typeof parseGatewayStatusOutput> {
+    const entry = this.gatewayStatusCache.get(service.id)
+    if (!entry) {
+      return {}
+    }
+
+    if (Date.now() - entry.cachedAt > 60_000) {
+      this.gatewayStatusCache.delete(service.id)
+      return {}
+    }
+
+    return entry.value
+  }
+
+  private suggestNextServicePort(services: ManClawConfig['service'][]): number {
+    const usedPorts = services
+      .map((item) => item.port)
+      .filter((item): item is number => typeof item === 'number' && Number.isFinite(item) && item > 0)
+
+    if (usedPorts.length === 0) {
+      return 18789
+    }
+
+    return Math.max(...usedPorts) + 1
+  }
+
+  private async ensureCurrentServiceConfigPath(config: ManClawConfig): Promise<ManClawConfig> {
+    if (config.service.configPath.trim()) {
+      return config
+    }
+
+    const discoveredPath = await this.discoverConfigPathViaCli(config.service)
+    if (!discoveredPath) {
+      return config
+    }
+
+    const nextService = normalizeManagedService(
+      {
+        ...config.service,
+        configPath: discoveredPath,
+      },
+      config.service,
+    )
+    const nextConfig = normalizeConfig({
+      ...config,
+      service: nextService,
+      services: {
+        items: config.services.items.map((item) => (item.id === nextService.id ? { ...item, configPath: discoveredPath } : item)),
+      },
+    })
+
+    await writeFile(this.paths.configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8')
+    await this.appendAuditLog(`manager.config-path.discover id=${nextService.id}`)
+    await this.appendRuntimeLog('info', `config path discovered via openclaw config file: ${nextService.id}`)
+    return nextConfig
+  }
+
+  private async serviceNeedsProfileBootstrap(service: ManClawConfig['service']): Promise<boolean> {
+    if (service.profileMode !== 'profile' || !service.profileName?.trim()) {
+      return false
+    }
+
+    if (!service.configPath.trim()) {
+      return true
+    }
+
+    const targetPath = path.isAbsolute(service.configPath)
+      ? service.configPath
+      : path.resolve(this.rootDir, service.configPath)
+
+    return !(await fileExists(targetPath))
+  }
+
+  private async ensureCurrentServiceReady(config: ManClawConfig): Promise<ManClawConfig> {
+    if (!(await this.serviceNeedsProfileBootstrap(config.service))) {
+      return config
+    }
+
+    const initializedService = await this.initializeServiceProfile(config, config.service)
+    const nextConfig = normalizeConfig({
+      ...config,
+      service: initializedService,
+      services: {
+        items: config.services.items.map((item) => (item.id === initializedService.id ? initializedService : item)),
+      },
+    })
+
+    await writeFile(this.paths.configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8')
+    await this.appendAuditLog(`manager.profiles.repair id=${initializedService.id}`)
+    await this.appendRuntimeLog('info', `profile auto-initialized before start: ${initializedService.id}`)
+    return nextConfig
+  }
+
+  private async resolveServiceConfigPath(config: ManClawConfig): Promise<string> {
     const targetPath = config.service.configPath.trim()
     if (!targetPath) {
       throw new Error('Config.service.configPath must be configured.')
@@ -2619,6 +3421,204 @@ export class ManClawManager {
     }
 
     return path.resolve(this.rootDir, targetPath)
+  }
+
+  private async readWorkspaceFromCurrentConfig(config: ManClawConfig): Promise<string | undefined> {
+    try {
+      const targetPath = await this.resolveServiceConfigPath(config)
+      const raw = await readFile(targetPath, 'utf8')
+      const parsed = JSON.parse(raw) as { agents?: { defaults?: { workspace?: unknown } } }
+      const workspace = parsed.agents?.defaults?.workspace
+      return typeof workspace === 'string' && workspace.trim() ? workspace.trim() : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private async initializeServiceProfile(
+    config: ManClawConfig,
+    service: ManClawConfig['service'],
+  ): Promise<ManClawConfig['service']> {
+    if (service.profileMode !== 'profile' || !service.profileName?.trim()) {
+      throw new Error(`Service "${service.id}" is not a named profile.`)
+    }
+
+    const workspace = service.cwd.trim()
+    if (!workspace) {
+      throw new Error(`Profile ${service.id} 缺少默认 workspace，无法执行 onboard。`)
+    }
+
+    const port = typeof service.port === 'number' && Number.isFinite(service.port) && service.port > 0 ? service.port : 18789
+    const args = [
+      ...buildServiceProfileArgs(service),
+      'onboard',
+      '--mode',
+      'local',
+      '--non-interactive',
+      '--accept-risk',
+      '--auth-choice',
+      'skip',
+      '--gateway-bind',
+      'loopback',
+      '--gateway-port',
+      String(port),
+      '--skip-health',
+      '--skip-search',
+      '--skip-channels',
+      '--skip-skills',
+      '--skip-ui',
+      '--workspace',
+      workspace,
+      '--json',
+    ]
+
+    try {
+      const { stdout, stderr } = await execFileAsync(service.command.trim() || 'openclaw', args, {
+        cwd: this.rootDir,
+        env: buildServiceEnv(
+          {
+            ...service,
+            configPath: '',
+          },
+          { includeConfigPath: false },
+        ),
+        timeout: 30_000,
+      })
+      const discovered = parseOnboardOutput(`${stdout}\n${stderr}`.trim())
+      const configPath = discovered.configPath?.trim()
+      if (!configPath) {
+        throw new Error('OpenClaw onboard completed, but config path was not reported.')
+      }
+
+      return normalizeManagedService(
+        {
+          ...service,
+          cwd: discovered.workspace?.trim() || workspace,
+          configPath,
+          port,
+          healthcheck: {
+            ...service.healthcheck,
+            url: `http://127.0.0.1:${port}/health`,
+          },
+        },
+        config.service,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? summarizeCommandOutput(error.message) : 'Unknown error.'
+      throw new Error(`Profile ${service.id} 初始化失败：${message}`)
+    }
+  }
+
+  private async copyProfileState(
+    config: ManClawConfig,
+    sourceService: ManClawConfig['service'],
+    targetService: ManClawConfig['service'],
+  ): Promise<ManClawConfig['service']> {
+    const sourceConfigPath = await this.resolveConfigPathForService(sourceService)
+    if (!sourceConfigPath) {
+      throw new Error(`Source profile ${sourceService.id} 缺少可读取的 openclaw.json。`)
+    }
+
+    const targetConfigPath = targetService.configPath.trim()
+    if (!targetConfigPath) {
+      throw new Error(`Target profile ${targetService.id} 缺少可写入的 openclaw.json。`)
+    }
+
+    const raw = await readFile(sourceConfigPath, 'utf8')
+    const sourceConfig = JSON.parse(raw) as Record<string, unknown>
+    const nextConfig = structuredClone(sourceConfig)
+    const agents = asRecord(nextConfig.agents)
+    const defaults = asRecord(agents.defaults)
+    defaults.workspace = targetService.cwd
+    agents.defaults = defaults
+    nextConfig.agents = agents
+
+    const gateway = asRecord(nextConfig.gateway)
+    gateway.port = targetService.port
+    nextConfig.gateway = gateway
+
+    await writeFile(targetConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8')
+    await this.copyProfileWorkspace(sourceService, targetService)
+    await this.appendAuditLog(`manager.profiles.copy from=${sourceService.id} to=${targetService.id}`)
+    await this.appendRuntimeLog('info', `profile copied: ${sourceService.id} -> ${targetService.id}`)
+    return normalizeManagedService(
+      {
+        ...targetService,
+        configPath: targetConfigPath,
+      },
+      config.service,
+    )
+  }
+
+  private async copyProfileWorkspace(
+    sourceService: ManClawConfig['service'],
+    targetService: ManClawConfig['service'],
+  ): Promise<void> {
+    const sourceWorkspace = await this.readWorkspaceForService(sourceService)
+    const targetWorkspace = targetService.cwd.trim()
+    if (!sourceWorkspace || !targetWorkspace || sourceWorkspace === targetWorkspace) {
+      return
+    }
+
+    if (!(await fileExists(sourceWorkspace))) {
+      return
+    }
+
+    await rm(targetWorkspace, { recursive: true, force: true })
+    await mkdir(path.dirname(targetWorkspace), { recursive: true })
+    await cp(sourceWorkspace, targetWorkspace, {
+      recursive: true,
+      force: true,
+    })
+  }
+
+  private async deleteProfileWorkspace(
+    service: ManClawConfig['service'],
+    remainingServices: ManClawConfig['service'][],
+  ): Promise<void> {
+    const targetWorkspace = await this.readWorkspaceForService(service)
+    if (!targetWorkspace) {
+      return
+    }
+
+    const sharedBy = await Promise.all(remainingServices.map((item) => this.readWorkspaceForService(item)))
+    if (sharedBy.some((item) => item === targetWorkspace)) {
+      throw new Error(`Workspace ${targetWorkspace} 仍被其他 profile 使用，不能删除。`)
+    }
+
+    await rm(targetWorkspace, { recursive: true, force: true })
+  }
+
+  private async readWorkspaceForService(service: ManClawConfig['service']): Promise<string | undefined> {
+    const configPath = await this.resolveConfigPathForService(service)
+    if (configPath) {
+      try {
+        const raw = await readFile(configPath, 'utf8')
+        const parsed = JSON.parse(raw) as { agents?: { defaults?: { workspace?: unknown } } }
+        const workspace = parsed.agents?.defaults?.workspace
+        if (typeof workspace === 'string' && workspace.trim()) {
+          return workspace.trim()
+        }
+      } catch {
+        // Fall through to service.cwd.
+      }
+    }
+
+    return service.cwd.trim() || undefined
+  }
+
+  private async resolveConfigPathForService(service: ManClawConfig['service']): Promise<string | undefined> {
+    const savedPath = service.configPath.trim()
+    if (savedPath) {
+      return path.isAbsolute(savedPath) ? savedPath : path.resolve(this.rootDir, savedPath)
+    }
+
+    const discoveredPath = await this.discoverConfigPathViaCli(service)
+    if (!discoveredPath?.trim()) {
+      return undefined
+    }
+
+    return path.isAbsolute(discoveredPath) ? discoveredPath : path.resolve(this.rootDir, discoveredPath)
   }
 
   private extractQuickModelConfig(config: Record<string, unknown>): QuickModelConfigPayload {
@@ -3204,6 +4204,101 @@ export class ManClawManager {
     return nextConfig
   }
 
+  private async ensureAgentWorkspaces(config: Record<string, unknown>, candidate: AgentConfigPayload): Promise<void> {
+    const currentDocument = this.extractAgentConfigBase(config)
+    const currentAgentIds = new Set(currentDocument.items.map((item) => item.id))
+    const normalizedItems = candidate.items
+      .map((item) => ({
+        id: item.id.trim(),
+        workspace: this.resolveWorkspacePath(item.workspace?.trim() || candidate.defaults.workspace.trim()),
+        modelPrimary: item.modelPrimary?.trim() || candidate.defaults.modelPrimary.trim(),
+      }))
+      .filter((item) => item.id)
+
+    if (normalizedItems.length === 0) {
+      return
+    }
+
+    const managerConfig = await this.readConfigModel()
+    const command = managerConfig.service.command.trim() || 'openclaw'
+    const cwd = path.resolve(this.rootDir, managerConfig.service.cwd)
+    const env = buildServiceEnv(managerConfig.service)
+
+    for (const item of normalizedItems) {
+      const agentId = item.id
+      const workspace = item.workspace
+      const existsInConfig = currentAgentIds.has(agentId)
+      const workspaceExists = await fileExists(workspace)
+
+      if (existsInConfig && workspaceExists) {
+        continue
+      }
+
+      if (!existsInConfig) {
+        const args = buildOpenClawCliArgs(managerConfig.service, ['agents', 'add', agentId, '--workspace', workspace, '--non-interactive', '--json'])
+        if (item.modelPrimary) {
+          args.push('--model', item.modelPrimary)
+        }
+
+        try {
+          await mkdir(path.dirname(workspace), { recursive: true })
+          await execFileAsync(command, args, {
+            cwd,
+            env,
+            timeout: 20_000,
+          })
+          await this.appendAuditLog(`agent.add id=${agentId} workspace=${workspace}`)
+          await this.appendRuntimeLog('info', `agent scaffold created for ${agentId} at ${workspace}`)
+        } catch (error) {
+          const message = error instanceof Error ? summarizeCommandOutput(error.message) : 'Unknown error.'
+          throw new Error(`Failed to initialize workspace for agent "${agentId}": ${message}`)
+        }
+        continue
+      }
+
+      try {
+        await this.seedWorkspaceScaffold(command, cwd, workspace)
+        await this.appendAuditLog(`agent.workspace.reseed id=${agentId} workspace=${workspace}`)
+        await this.appendRuntimeLog('info', `agent workspace scaffold restored for ${agentId} at ${workspace}`)
+      } catch (error) {
+        const message = error instanceof Error ? summarizeCommandOutput(error.message) : 'Unknown error.'
+        throw new Error(`Failed to restore workspace for agent "${agentId}": ${message}`)
+      }
+    }
+  }
+
+  private async seedWorkspaceScaffold(command: string, cwd: string, workspace: string): Promise<void> {
+    const seedId = `manclaw-seed-${randomUUID().slice(0, 8)}`
+    const seedProfile = `manclaw-scaffold-${randomUUID().slice(0, 8)}`
+    const tempRoot = path.join(this.paths.dataDir, 'tmp', seedId)
+    const tempWorkspace = path.join(tempRoot, 'workspace')
+    const homeDir = process.env.HOME ?? path.dirname(this.rootDir)
+    const profileDir = path.join(homeDir, `.openclaw-${seedProfile}`)
+
+    try {
+      await rm(tempRoot, { recursive: true, force: true })
+      await mkdir(path.dirname(workspace), { recursive: true })
+      await mkdir(tempRoot, { recursive: true })
+
+      await execFileAsync(command, ['--profile', seedProfile, 'agents', 'add', seedId, '--workspace', tempWorkspace, '--non-interactive', '--json'], {
+        cwd,
+        env: {
+          ...process.env,
+        },
+        timeout: 20_000,
+      })
+
+      await cp(tempWorkspace, workspace, {
+        recursive: true,
+        force: false,
+        errorOnExist: false,
+      })
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true })
+      await rm(profileDir, { recursive: true, force: true })
+    }
+  }
+
   private applyChannelConfig(config: Record<string, unknown>, candidate: ChannelConfigPayload): Record<string, unknown> {
     if (!Array.isArray(candidate.items)) {
       throw new Error('Channels payload must contain items[].')
@@ -3370,8 +4465,10 @@ export class ManClawManager {
     )
   }
 
-  private async findRunningProcess(config: ManClawConfig): Promise<DetectedProcess | undefined> {
-    const managedChild = this.serviceState.child
+  private async findRunningProcess(config: ManClawConfig, options?: { serviceId?: string; useManagedChild?: boolean }): Promise<DetectedProcess | undefined> {
+    const serviceId = options?.serviceId ?? config.service.id
+    const state = this.getServiceState(config.service)
+    const managedChild = options?.useManagedChild === false ? undefined : state.child
     if (managedChild?.pid && !managedChild.killed) {
       const managedAlive = await this.isPidRunning(managedChild.pid)
       if (managedAlive) {
@@ -3383,13 +4480,30 @@ export class ManClawManager {
         }
       }
 
-      this.serviceState.child = undefined
+      state.child = undefined
     }
 
-    const processName = normalizeProcessName(config.service.command, config.service.processName, config.service.args)
+    const persistedManaged = await this.readPersistedManagedProcess(config.service, serviceId)
+    if (persistedManaged) {
+      return persistedManaged
+    }
+
+    const processName = normalizeProcessName(
+      config.service.command,
+      config.service.processName,
+      buildServiceArgs(config.service),
+      config.service.profileMode,
+      config.service.profileName,
+      config.service.id,
+    )
     const managerDetected = await this.findRunningProcessViaServiceManager(config, processName)
     if (managerDetected) {
       return managerDetected
+    }
+
+    const portDetected = await this.findRunningProcessViaPort(config)
+    if (portDetected) {
+      return portDetected
     }
 
     try {
@@ -3420,7 +4534,7 @@ export class ManClawManager {
           args,
           config.service.command,
           processName,
-          config.service.args,
+          buildServiceArgs(config.service),
         )
 
         if (sameCommand) {
@@ -3439,11 +4553,269 @@ export class ManClawManager {
     return undefined
   }
 
+  private async findRunningProcessViaPort(config: ManClawConfig): Promise<DetectedProcess | undefined> {
+    const port = config.service.port
+    if (typeof port !== 'number' || !Number.isFinite(port) || port <= 0) {
+      return undefined
+    }
+
+    if (process.platform !== 'linux') {
+      return undefined
+    }
+
+    try {
+      const pid = await this.findListeningPidByPort(port, config.shell.timeoutMs)
+      if (!pid || pid === process.pid) {
+        return undefined
+      }
+
+      const detected = await this.readDetectedProcessByPid(config.service, pid)
+      if (detected) {
+        return {
+          ...detected,
+          detectedBy: 'process-scan',
+        }
+      }
+
+      return {
+        pid,
+        command: config.service.processName,
+        args: buildServiceArgs(config.service).join(' '),
+        detectedBy: 'process-scan',
+      }
+    } catch {
+      return undefined
+    }
+
+    return undefined
+  }
+
+  private async findListeningPidByPort(port: number, timeoutMs: number): Promise<number | undefined> {
+    const timeout = Math.min(timeoutMs, 5_000)
+
+    try {
+      const { stdout } = await execFileAsync('ss', ['-ltnp'], {
+        timeout,
+        maxBuffer: 1024 * 1024,
+      })
+      for (const line of stdout.split(/\r?\n/)) {
+        if (!line.includes(`:${port}`) || !line.includes('pid=')) {
+          continue
+        }
+
+        const pidMatch = line.match(/pid=(\d+)/)
+        if (pidMatch) {
+          const pid = Number(pidMatch[1])
+          if (Number.isFinite(pid) && pid > 0) {
+            return pid
+          }
+        }
+      }
+    } catch {
+      // Fall through to lsof.
+    }
+
+    try {
+      const { stdout } = await execFileAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], {
+        timeout,
+        maxBuffer: 1024 * 1024,
+      })
+      const lines = stdout.split(/\r?\n/).slice(1)
+      for (const line of lines) {
+        const match = line.trim().match(/^\S+\s+(\d+)\s+/)
+        if (!match) {
+          continue
+        }
+
+        const pid = Number(match[1])
+        if (Number.isFinite(pid) && pid > 0) {
+          return pid
+        }
+      }
+    } catch {
+      return undefined
+    }
+
+    return undefined
+  }
+
+  private async restoreManagedRuntimeState(): Promise<void> {
+    const config = await this.readConfigModel().catch(() => undefined)
+    if (!config) {
+      return
+    }
+
+    const persistedItems = await this.readPersistedRuntimeState()
+    if (persistedItems.length === 0) {
+      return
+    }
+
+    const services = config.services.items.length > 0 ? config.services.items : [config.service]
+    const validItems: PersistedRuntimeState[] = []
+
+    for (const persisted of persistedItems) {
+      const targetService = services.find((item) => item.id === persisted.serviceId)
+      if (!targetService) {
+        continue
+      }
+
+      const matched = await this.readDetectedProcessByPid(targetService, persisted.pid)
+      if (!matched) {
+        continue
+      }
+
+      const state = this.getServiceState(targetService)
+      state.status = {
+        ...state.status,
+        id: targetService.id,
+        name: targetService.label ?? targetService.id,
+        status: 'running',
+        pid: matched.pid,
+        startedAt: persisted.startedAt ?? state.status.startedAt,
+        command: targetService.command,
+        args: buildServiceArgs(targetService),
+        cwd: path.resolve(this.rootDir, targetService.cwd),
+        processName: targetService.processName,
+        configPath: targetService.configPath,
+        healthUrl: targetService.healthcheck.url,
+        healthStatus: 'disabled',
+        detectedBy: 'managed',
+        message: `Recovered managed PID ${matched.pid} from runtime state.`,
+      }
+      validItems.push(persisted)
+    }
+
+    await this.writeRuntimeStateDocument(validItems)
+  }
+
+  private async readPersistedManagedProcess(
+    service: ManClawConfig['service'],
+    serviceId = service.id,
+  ): Promise<DetectedProcess | undefined> {
+    const persisted = (await this.readPersistedRuntimeState()).find((item) => item.serviceId === serviceId)
+    if (!persisted || persisted.serviceId !== service.id) {
+      return undefined
+    }
+
+    return this.readDetectedProcessByPid(service, persisted.pid)
+  }
+
+  private async readPersistedRuntimeState(): Promise<PersistedRuntimeState[]> {
+    if (!(await fileExists(this.paths.runtimeStatePath))) {
+      return []
+    }
+
+    try {
+      const raw = await readFile(this.paths.runtimeStatePath, 'utf8')
+      const parsed = JSON.parse(raw) as Partial<PersistedRuntimeStateDocument> | Partial<PersistedRuntimeState>
+      const items = Array.isArray((parsed as Partial<PersistedRuntimeStateDocument>)?.items)
+        ? (parsed as Partial<PersistedRuntimeStateDocument>).items ?? []
+        : [parsed as Partial<PersistedRuntimeState>]
+      const normalized: PersistedRuntimeState[] = []
+
+      for (const item of items) {
+        if (!item || typeof item !== 'object') {
+          continue
+        }
+        const pid = item.pid
+        const rawServiceId = item.serviceId
+        if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
+          continue
+        }
+        if (typeof rawServiceId !== 'string' || !rawServiceId.trim()) {
+          continue
+        }
+
+        normalized.push({
+          pid,
+          serviceId: rawServiceId.trim(),
+          startedAt: typeof item.startedAt === 'string' && item.startedAt.trim() ? item.startedAt.trim() : undefined,
+        })
+      }
+
+      return normalized
+    } catch {
+      return []
+    }
+  }
+
+  private async saveRuntimeState(serviceId: string, state: PersistedRuntimeState): Promise<void> {
+    const items = (await this.readPersistedRuntimeState()).filter((item) => item.serviceId !== serviceId)
+    items.push(state)
+    await this.writeRuntimeStateDocument(items)
+  }
+
+  private async clearRuntimeState(serviceId?: string): Promise<void> {
+    if (!serviceId) {
+      await rm(this.paths.runtimeStatePath, { force: true })
+      return
+    }
+
+    const items = (await this.readPersistedRuntimeState()).filter((item) => item.serviceId !== serviceId)
+    await this.writeRuntimeStateDocument(items)
+  }
+
+  private async writeRuntimeStateDocument(items: PersistedRuntimeState[]): Promise<void> {
+    if (items.length === 0) {
+      await rm(this.paths.runtimeStatePath, { force: true })
+      return
+    }
+
+    const document: PersistedRuntimeStateDocument = {
+      items,
+    }
+    await writeFile(this.paths.runtimeStatePath, `${JSON.stringify(document, null, 2)}\n`, 'utf8')
+  }
+
+  private async readDetectedProcessByPid(
+    service: ManClawConfig['service'],
+    pid: number,
+  ): Promise<DetectedProcess | undefined> {
+    try {
+      const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'pid=,comm=,args='], {
+        timeout: 5_000,
+        maxBuffer: 1024 * 1024,
+      })
+      const match = stdout.match(/^\s*(\d+)\s+(\S+)\s+(.+)$/m)
+      if (!match) {
+        return undefined
+      }
+
+      const foundPid = Number(match[1])
+      const commandName = match[2]
+      const args = match[3]
+      if (!Number.isFinite(foundPid) || foundPid <= 0) {
+        return undefined
+      }
+
+      const processName = normalizeProcessName(
+        service.command,
+        service.processName,
+        buildServiceArgs(service),
+        service.profileMode,
+        service.profileName,
+        service.id,
+      )
+      if (!matchesProcessSignature(commandName, args, service.command, processName, buildServiceArgs(service))) {
+        return undefined
+      }
+
+      return {
+        pid: foundPid,
+        command: commandName,
+        args,
+        detectedBy: 'managed',
+      }
+    } catch {
+      return undefined
+    }
+  }
+
   private async findRunningProcessViaServiceManager(
     config: ManClawConfig,
     processName: string,
   ): Promise<DetectedProcess | undefined> {
-    const candidates = createServiceManagerCandidates(config.service.command, processName, config.service.args)
+    const candidates = createServiceManagerCandidates(config.service.command, processName, buildServiceArgs(config.service))
 
     if (process.platform === 'linux') {
       for (const candidate of candidates) {
@@ -3637,7 +5009,8 @@ export class ManClawManager {
     }
   }
 
-  private attachChildListeners(child: ManagedChildProcess): void {
+  private attachChildListeners(service: ManClawConfig['service'], child: ManagedChildProcess): void {
+    const state = this.getServiceState(service)
     let stdoutBuffer = ''
     let stderrBuffer = ''
 
@@ -3650,8 +5023,8 @@ export class ManClawManager {
     })
 
     child.on('error', async (error) => {
-      this.serviceState.status = {
-        ...this.serviceState.status,
+      state.status = {
+        ...state.status,
         status: 'degraded',
         message: error.message,
       }
@@ -3659,12 +5032,13 @@ export class ManClawManager {
     })
 
     child.on('exit', async (code, signal) => {
-      const shouldRestart = !this.serviceState.stopRequested
+      const shouldRestart = !state.stopRequested
       const config = await this.readConfigModel().catch(() => undefined)
-      this.serviceState.child = undefined
-      this.serviceState.restartTimer = undefined
-      this.serviceState.status = {
-        ...this.serviceState.status,
+      state.child = undefined
+      state.restartTimer = undefined
+      await this.clearRuntimeState(service.id)
+      state.status = {
+        ...state.status,
         status: 'stopped',
         pid: undefined,
         message: `openclaw exited with code ${code ?? 'null'}${signal ? ` signal ${signal}` : ''}.`,
@@ -3675,20 +5049,29 @@ export class ManClawManager {
       if (stderrBuffer.trim()) {
         await this.appendRuntimeLog('error', stderrBuffer.trim())
       }
-      await this.appendRuntimeLog('warn', this.serviceState.status.message ?? 'openclaw exited.')
+      await this.appendRuntimeLog('warn', state.status.message ?? 'openclaw exited.')
 
-      if (shouldRestart && config?.service.autoRestart) {
-        this.serviceState.status = {
-          ...this.serviceState.status,
+      const latestService =
+        config?.service.id === service.id ? config.service : config?.services.items.find((item) => item.id === service.id)
+
+      if (shouldRestart && latestService?.autoRestart) {
+        state.status = {
+          ...state.status,
           status: 'degraded',
           message: 'openclaw exited unexpectedly, restarting in 2 seconds.',
         }
         await this.appendRuntimeLog('warn', 'openclaw exited unexpectedly, auto restart scheduled')
-        this.serviceState.restartTimer = setTimeout(() => {
-          this.serviceState.restartTimer = undefined
-          void this.startService().catch(async (error) => {
-            this.serviceState.status = {
-              ...this.serviceState.status,
+        state.restartTimer = setTimeout(() => {
+          state.restartTimer = undefined
+          if (!config || !latestService) {
+            return
+          }
+          void this.startService({
+            ...config,
+            service: latestService,
+          }).catch(async (error) => {
+            state.status = {
+              ...state.status,
               status: 'degraded',
               message: error instanceof Error ? error.message : 'Auto restart failed.',
             }
@@ -3696,7 +5079,7 @@ export class ManClawManager {
           })
         }, 2_000)
       } else {
-        this.serviceState.stopRequested = false
+        state.stopRequested = false
       }
     })
   }
@@ -3714,6 +5097,22 @@ export class ManClawManager {
     }
 
     return trailing
+  }
+
+  private getServiceState(service: Pick<ManClawConfig['service'], 'id' | 'label'>): ServiceState {
+    const existing = this.serviceStates.get(service.id)
+    if (existing) {
+      existing.status.id = service.id
+      existing.status.name = service.label ?? service.id
+      return existing
+    }
+
+    const created: ServiceState = {
+      status: createDefaultServiceStatus(service),
+      stopRequested: false,
+    }
+    this.serviceStates.set(service.id, created)
+    return created
   }
 
   private async appendRuntimeLog(level: LogLevel, message: string): Promise<void> {

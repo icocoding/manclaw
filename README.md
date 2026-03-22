@@ -251,8 +251,8 @@ curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/instal
 
 - 服务端会在当前启动目录生成 `.manclaw/` 运行目录
 - 默认配置文件为当前启动目录下的 `.manclaw/config.json`
-- 默认按真实 `openclaw` 进程模型工作，使用 `service.command`、`service.args`、`service.processName` 管理和探测服务
-- 默认会把 `service.configPath` 通过 `service.configFlag` 追加到启动参数中，便于直接托管真实配置文件
+- 默认按真实 `openclaw` 进程模型工作，使用当前 `service` 实例以及 `services.items[]` 多实例注册表管理和探测服务
+- `service.configPath` 会通过环境变量 `OPENCLAW_CONFIG_PATH` 传给 `openclaw`，不再自动追加到启动参数
 - 服务在线状态不再只依赖内存中的托管子进程，也会扫描系统进程；可选开启 `service.healthcheck` 做 HTTP 健康检查
 
 默认配置示例：
@@ -260,6 +260,8 @@ curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/instal
 ```json
 {
   "service": {
+    "id": "default",
+    "label": "Default",
     "command": "openclaw",
     "args": [],
     "cwd": ".",
@@ -267,13 +269,33 @@ curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/instal
     "autoStart": true,
     "processName": "openclaw-gateway",
     "configPath": "./openclaw.config.json",
-    "configFlag": "--config",
     "healthcheck": {
       "enabled": false,
       "url": "http://127.0.0.1:8080/health",
       "timeoutMs": 3000,
       "expectedStatus": 200
     }
+  },
+  "services": {
+    "items": [
+      {
+        "id": "default",
+        "label": "Default",
+        "command": "openclaw",
+        "args": [],
+        "cwd": ".",
+        "env": {},
+        "autoStart": true,
+        "processName": "openclaw-gateway",
+        "configPath": "./openclaw.config.json",
+        "healthcheck": {
+          "enabled": false,
+          "url": "http://127.0.0.1:8080/health",
+          "timeoutMs": 3000,
+          "expectedStatus": 200
+        }
+      }
+    ]
   }
 }
 ```

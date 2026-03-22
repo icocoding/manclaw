@@ -13,6 +13,8 @@ import {
   type AgentConfigPayload,
   type ApiResponse,
   type ChannelConfigPayload,
+  type CreateProfilePayload,
+  type DeleteProfilePayload,
   type FeishuToolsConfig,
   type QuickModelConfigPayload,
 } from '@manclaw/shared'
@@ -21,6 +23,7 @@ const QUIET_LOG_PATHS = new Set([
   '/health',
   '/api/system/summary',
   '/api/openclaw/status',
+  '/api/openclaw/statuses',
   '/api/logs/runtime',
   '/api/logs/audit',
   '/api/skills/installed',
@@ -108,6 +111,7 @@ app.get('/health', async () => ({
 
 app.get('/api/system/summary', async () => ok(await manager.getSystemSummary()))
 app.get('/api/openclaw/status', async () => ok(await manager.getServiceStatus()))
+app.get('/api/openclaw/statuses', async () => ok(await manager.getServiceStatuses()))
 app.get('/api/openclaw/plugins', async () => ok(await manager.getOpenClawPlugins()))
 app.get<{ Params: { id: string } }>('/api/openclaw/plugins/:id', async (request, reply) => {
   try {
@@ -149,6 +153,34 @@ app.post<{ Body: unknown }>('/api/manager/settings', async (request, reply) => {
     return ok(await manager.saveManagerSettings(request.body))
   } catch (error) {
     return reply.code(400).send(fail('CONFIG_VALIDATION_FAILED', error instanceof Error ? error.message : 'Manager settings save failed.'))
+  }
+})
+app.post<{ Body: CreateProfilePayload }>('/api/manager/profiles', async (request, reply) => {
+  if (typeof request.body?.id !== 'string' || request.body.id.trim() === '') {
+    return reply.code(400).send(fail('INVALID_INPUT', 'Body.id must be a non-empty string.'))
+  }
+  if (
+    request.body.port !== undefined &&
+    (!Number.isInteger(request.body.port) || request.body.port <= 0)
+  ) {
+    return reply.code(400).send(fail('INVALID_INPUT', 'Body.port must be a positive integer.'))
+  }
+
+  try {
+    return ok(await manager.createProfile(request.body))
+  } catch (error) {
+    return reply.code(400).send(fail('PROFILE_CREATE_FAILED', error instanceof Error ? error.message : 'Profile create failed.'))
+  }
+})
+app.post<{ Body: DeleteProfilePayload }>('/api/manager/profiles/delete', async (request, reply) => {
+  if (typeof request.body?.id !== 'string' || request.body.id.trim() === '') {
+    return reply.code(400).send(fail('INVALID_INPUT', 'Body.id must be a non-empty string.'))
+  }
+
+  try {
+    return ok(await manager.deleteProfile(request.body))
+  } catch (error) {
+    return reply.code(400).send(fail('PROFILE_DELETE_FAILED', error instanceof Error ? error.message : 'Profile delete failed.'))
   }
 })
 

@@ -72,6 +72,18 @@ export interface ManagerSettingsDocument {
   config: ManClawConfig
 }
 
+export interface CreateProfilePayload {
+  id: string
+  port?: number
+  sourceId?: string
+  workspaceSourceId?: string
+}
+
+export interface DeleteProfilePayload {
+  id: string
+  removeWorkspace?: boolean
+}
+
 export interface RestartNoticeDocument {
   message: string
   status: string
@@ -360,7 +372,12 @@ export interface ShellExecutionRecord {
 }
 
 export interface ManagedServiceConfig {
+  id: string
+  label?: string
+  profileMode: 'default' | 'dev' | 'profile'
+  profileName?: string
   command: string
+  port?: number
   args: string[]
   cwd: string
   env: Record<string, string>
@@ -368,7 +385,6 @@ export interface ManagedServiceConfig {
   autoRestart: boolean
   processName: string
   configPath: string
-  configFlag: string
   healthcheck: {
     enabled: boolean
     url: string
@@ -377,8 +393,13 @@ export interface ManagedServiceConfig {
   }
 }
 
+export interface ManagedServiceRegistry {
+  items: ManagedServiceConfig[]
+}
+
 export interface ManClawConfig {
   service: ManagedServiceConfig
+  services: ManagedServiceRegistry
   shell: {
     timeoutMs: number
   }

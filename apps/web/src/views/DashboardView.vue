@@ -6,14 +6,6 @@
         <h2>Command Your Claw.</h2>
       </div>
       <div class="hero__actions">
-        <RestartNoticeBar
-          v-if="restartNotice.open"
-          variant="inline"
-          :busy="busy.restartNotice"
-          :message="restartNotice.message"
-          @restart="restartFromNotice"
-          @dismiss="closeRestartNotice"
-        />
         <n-button tertiary :disabled="busy.refresh" @click="refreshAll">
           {{ busy.refresh ? '刷新中...' : '刷新全部' }}
         </n-button>
@@ -28,7 +20,7 @@
             <p class="panel__label">接入设置</p>
             <h3>openclaw 路径与启动参数</h3>
           </div>
-          <p class="panel__muted">当 `openclaw` 不在默认位置时，在这里填写。配置文件路径会通过环境变量传给 `openclaw`。</p>
+          <p class="panel__muted">这里只编辑左侧当前已选中的 service。实例切换与 profile 切换统一在左侧服务控制面板完成。</p>
         </div>
 
         <div class="form-grid">
@@ -39,27 +31,22 @@
 
           <label class="field">
             <span class="field__label">进程名</span>
-            <n-input v-model:value="managerForm.processName" class="field-control" placeholder="openclaw-gateway" />
+            <n-input v-model:value="managerForm.processName" class="field-control" placeholder="openclaw-gateway-default" />
           </label>
 
           <label class="field">
-            <span class="field__label">工作目录</span>
-            <n-input v-model:value="managerForm.cwd" class="field-control" placeholder="/path/to/workspace" />
-          </label>
-
-          <label class="field">
-            <span class="field__label">配置文件路径</span>
-            <n-input v-model:value="managerForm.configPath" class="field-control" placeholder="/path/to/openclaw.json" />
+            <span class="field__label">端口</span>
+            <n-input v-model:value="managerForm.portText" class="field-control" placeholder="18789" />
           </label>
 
           <label class="field field--span-2">
-            <span class="field__label">启动参数</span>
+            <span class="field__label">命令参数</span>
             <n-input
               v-model:value="managerForm.argsText"
               class="field-control"
               type="textarea"
               :autosize="{ minRows: 5, maxRows: 8 }"
-              placeholder="每行一个参数，例如：&#10;gateway&#10;--port&#10;18789"
+              placeholder="每行一个参数，例如：&#10;gateway&#10;--log-level&#10;debug"
             />
           </label>
 
@@ -76,6 +63,9 @@
           <n-button type="primary" :disabled="busy.settings" @click="saveManagerSettings">保存接入设置</n-button>
         </div>
 
+        <p class="panel__muted">当前 Service：{{ managerSettings?.config.service.label || managerSettings?.config.service.id || '--' }}</p>
+        <p class="panel__muted">当前工作目录：{{ managerSettings?.config.service.cwd ?? '--' }}</p>
+        <p class="panel__muted">当前配置文件：{{ managerSettings?.config.service.configPath?.trim() || '--' }}</p>
         <p class="status-text">{{ managerMessage }}</p>
       </article>
 
@@ -88,33 +78,7 @@
         </div>
         <p class="panel__muted">路径：{{ managerSettings?.path ?? '--' }}</p>
         <p class="panel__muted">最后更新：{{ formatDateTime(managerSettings?.updatedAt) }}</p>
-      </article>
-    </section>
-
-    <section class="stats-grid">
-      <article class="panel stat-panel">
-        <p class="panel__label">服务状态</p>
-        <h3>{{ service.name }}</h3>
-        <p class="panel__value">{{ serviceStatusLabel }}</p>
-        <p class="panel__muted">{{ service.message || '暂无状态说明' }}</p>
-      </article>
-
-      <article class="panel stat-panel">
-        <p class="panel__label">进程 PID</p>
-        <p class="panel__value">{{ service.pid ?? '--' }}</p>
-        <p class="panel__muted">启动时间：{{ formatDateTime(service.startedAt) }}</p>
-      </article>
-
-      <article class="panel stat-panel">
-        <p class="panel__label">运行时长</p>
-        <p class="panel__value">{{ formatUptime(service.uptimeSeconds) }}</p>
-        <p class="panel__muted">工作目录：{{ service.cwd ?? '--' }}</p>
-      </article>
-
-      <article class="panel stat-panel">
-        <p class="panel__label">配置文件</p>
-        <p class="panel__value panel__value--small">{{ config.path || '--' }}</p>
-        <p class="panel__muted">最后更新：{{ formatDateTime(config.updatedAt) }}</p>
+        <p class="panel__muted">Profile 管理已移动到左侧服务控制面板。</p>
       </article>
     </section>
 
@@ -258,11 +222,10 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { NButton, NCheckbox, NInput, NSelect } from 'naive-ui'
+import { NButton, NCheckbox, NInput } from 'naive-ui'
 import { RouterLink } from 'vue-router'
 
 import { apiRequest } from '../lib/api'
-import RestartNoticeBar from '../components/RestartNoticeBar.vue'
 
 import type {
   ConfigDocument,
@@ -272,7 +235,6 @@ import type {
   ManagerSettingsDocument,
   QuickModelConfigDocument,
   QuickModelEntry,
-  RestartNoticeDocument,
   ServiceDetail,
   ShellAllowedCommand,
   ShellExecutionRecord,
@@ -293,7 +255,7 @@ const config = ref<ConfigDocument>({
 })
 const configContent = ref('')
 const managerSettings = ref<ManagerSettingsDocument>()
-const managerMessage = ref('可在这里填写非默认的 openclaw 路径和配置路径。配置文件路径会通过环境变量传递。')
+const managerMessage = ref('这里编辑的是左侧当前已选中的 service。实例与 profile 切换请使用左侧服务控制面板。')
 const quickModelProviders = ref<QuickModelConfigDocument['availableProviders']>([])
 const quickModelMessage = ref('模型配置已迁移到独立页面，后续会继续补齐多模型能力。')
 const quickModelEntries = ref<QuickModelEntry[]>([])
@@ -313,25 +275,16 @@ const busy = reactive({
   config: false,
   logs: false,
   shell: false,
-  restartNotice: false,
-})
-const restartNotice = reactive({
-  open: false,
-  message: '',
-  status: '配置已更新，建议重启 OpenClaw 以立即生效。',
-  isError: false,
 })
 
 const managerForm = reactive({
   command: '',
   processName: '',
-  cwd: '',
-  configPath: '',
+  portText: '',
   argsText: '',
   autoStart: true,
   autoRestart: true,
 })
-
 let refreshTimer: number | undefined
 
 const serviceStatusLabel = computed(() => {
@@ -362,6 +315,21 @@ const allowedCommandOptions = computed(() => allowedCommands.value.map((command)
   label: `${command.title} (${command.riskLevel})`,
   value: command.id,
 })))
+const hasPendingManagerChanges = computed(() => {
+  if (!managerSettings.value) {
+    return false
+  }
+
+  const savedTarget = managerSettings.value.config.service
+  return (
+    managerForm.command !== savedTarget.command ||
+    managerForm.processName !== savedTarget.processName ||
+    managerForm.portText !== (savedTarget.port ? String(savedTarget.port) : '') ||
+    managerForm.argsText !== savedTarget.args.join('\n') ||
+    managerForm.autoStart !== savedTarget.autoStart ||
+    managerForm.autoRestart !== savedTarget.autoRestart
+  )
+})
 
 function formatDateTime(value?: string): string {
   if (!value) {
@@ -373,78 +341,105 @@ function formatDateTime(value?: string): string {
   })
 }
 
-function formatUptime(seconds?: number): string {
-  if (!seconds && seconds !== 0) {
-    return '--'
-  }
-
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const remainingSeconds = seconds % 60
-  return `${hours}h ${minutes}m ${remainingSeconds}s`
-}
-
 async function refreshAll(): Promise<void> {
   busy.refresh = true
   try {
-    const [summary, serviceStatus, settings, restartNoticeDocument, quickModel, runtime, audit, commands] = await Promise.all([
+    const shouldPreserveManagerForm = hasPendingManagerChanges.value
+    const [summaryResult, serviceStatusResult, settingsResult, runtimeResult, auditResult, commandsResult] = await Promise.allSettled([
       apiRequest<SystemSummary>('/api/system/summary'),
       apiRequest<ServiceDetail>('/api/openclaw/status'),
       apiRequest<ManagerSettingsDocument>('/api/manager/settings'),
-      apiRequest<RestartNoticeDocument | null>('/api/restart-notice'),
-      apiRequest<QuickModelConfigDocument>('/api/model-setup/current'),
       apiRequest<LogEntry[]>('/api/logs/runtime?limit=40'),
       apiRequest<LogEntry[]>('/api/logs/audit?limit=40'),
       apiRequest<{ items: ShellAllowedCommand[] }>('/api/shell/allowed-commands'),
     ])
 
-    service.value = serviceStatus
-    managerSettings.value = settings
-    if (!busy.settings) {
-      applyManagerSettings(settings)
+    if (serviceStatusResult.status === 'fulfilled') {
+      service.value = serviceStatusResult.value
     }
-    if (!busy.restartNotice) {
-      applyRestartNotice(restartNoticeDocument)
-    }
-    quickModelProviders.value = quickModel.availableProviders
-    applyQuickModelSettings(quickModel)
-    runtimeLogs.value = runtime
-    auditLogs.value = audit
-    allowedCommands.value = commands.items
 
-    const [configResult, revisionsResult] = await Promise.allSettled([
-      apiRequest<ConfigDocument>('/api/config/current'),
-      apiRequest<ConfigRevision[]>('/api/config/revisions'),
-    ])
-
-    if (configResult.status === 'fulfilled') {
-      config.value = configResult.value
-      if (!busy.config) {
-        configContent.value = configResult.value.content
-        configMessage.value = '可直接编辑 openclaw 配置并保存。'
+    if (settingsResult.status === 'fulfilled') {
+      managerSettings.value = settingsResult.value
+      if (!busy.settings && !shouldPreserveManagerForm) {
+        applyManagerSettings(settingsResult.value)
       }
+      const currentConfigPath = settingsResult.value.config.service.configPath?.trim()
+      if (currentConfigPath) {
+        try {
+          const quickModel = await apiRequest<QuickModelConfigDocument>('/api/model-setup/current')
+          quickModelProviders.value = quickModel.availableProviders
+          applyQuickModelSettings(quickModel)
+        } catch (error) {
+          quickModelMessage.value = error instanceof Error ? error.message : '无法读取模型配置。'
+        }
+      } else {
+        quickModelEntries.value = []
+        quickModelDefaultId.value = ''
+        quickModelMessage.value = '当前 profile 尚未发现可用配置文件，模型配置暂不可读取。'
+      }
+    }
+
+    if (runtimeResult.status === 'fulfilled') {
+      runtimeLogs.value = runtimeResult.value
+    }
+
+    if (auditResult.status === 'fulfilled') {
+      auditLogs.value = auditResult.value
+    }
+
+    if (commandsResult.status === 'fulfilled') {
+      allowedCommands.value = commandsResult.value.items
+    }
+
+    if (managerSettings.value?.config.service.configPath?.trim()) {
+      const [configResult, revisionsResult] = await Promise.allSettled([
+        apiRequest<ConfigDocument>('/api/config/current'),
+        apiRequest<ConfigRevision[]>('/api/config/revisions'),
+      ])
+
+      if (configResult.status === 'fulfilled') {
+        config.value = configResult.value
+        if (!busy.config) {
+          configContent.value = configResult.value.content
+          configMessage.value = '可直接编辑 openclaw 配置并保存。'
+        }
+      } else {
+        config.value = {
+          format: 'json',
+          path: managerSettings.value?.config.service.configPath ?? '',
+          content: '',
+          updatedAt: '',
+        }
+        if (!busy.config) {
+          configContent.value = ''
+          configMessage.value = configResult.reason instanceof Error ? configResult.reason.message : '无法读取 openclaw 配置。'
+        }
+      }
+
+      revisions.value = revisionsResult.status === 'fulfilled' ? revisionsResult.value : []
     } else {
       config.value = {
         format: 'json',
-        path: managerForm.configPath,
+        path: '',
         content: '',
         updatedAt: '',
       }
+      revisions.value = []
       if (!busy.config) {
         configContent.value = ''
-        configMessage.value = configResult.reason instanceof Error ? configResult.reason.message : '无法读取 openclaw 配置。'
+        configMessage.value = '当前 profile 尚未发现可用配置文件，配置编辑暂不可用。'
       }
     }
 
-    revisions.value = revisionsResult.status === 'fulfilled' ? revisionsResult.value : []
-
-    if (!selectedCommandId.value && commands.items.length > 0) {
-      selectedCommandId.value = commands.items[0].id
+    if (!selectedCommandId.value && commandsResult.status === 'fulfilled' && commandsResult.value.items.length > 0) {
+      selectedCommandId.value = commandsResult.value.items[0].id
     }
 
-    const openclawSummary = summary.services.find((item) => item.id === 'openclaw')
-    if (openclawSummary?.message) {
-      service.value.message = openclawSummary.message
+    if (summaryResult.status === 'fulfilled') {
+      const openclawSummary = summaryResult.value.services.find((item) => item.id === 'openclaw')
+      if (openclawSummary?.message) {
+        service.value.message = openclawSummary.message
+      }
     }
   } catch (error) {
     shellMessage.value = error instanceof Error ? error.message : '刷新失败。'
@@ -456,8 +451,7 @@ async function refreshAll(): Promise<void> {
 function applyManagerSettings(settings: ManagerSettingsDocument): void {
   managerForm.command = settings.config.service.command
   managerForm.processName = settings.config.service.processName
-  managerForm.cwd = settings.config.service.cwd
-  managerForm.configPath = settings.config.service.configPath
+  managerForm.portText = settings.config.service.port ? String(settings.config.service.port) : ''
   managerForm.argsText = settings.config.service.args.join('\n')
   managerForm.autoStart = settings.config.service.autoStart
   managerForm.autoRestart = settings.config.service.autoRestart
@@ -468,15 +462,8 @@ function applyQuickModelSettings(document: QuickModelConfigDocument): void {
   quickModelDefaultId.value = document.defaultModelId
 }
 
-function applyRestartNotice(document: RestartNoticeDocument | null): void {
-  restartNotice.open = Boolean(document)
-  restartNotice.message = document?.message ?? ''
-  restartNotice.status = document?.status ?? '配置已更新，建议重启 OpenClaw 以立即生效。'
-  restartNotice.isError = document?.isError ?? false
-}
-
 async function openRestartNotice(message: string): Promise<void> {
-  const document = await apiRequest<RestartNoticeDocument>('/api/restart-notice', {
+  await apiRequest('/api/restart-notice', {
     method: 'POST',
     body: JSON.stringify({
       message,
@@ -484,14 +471,6 @@ async function openRestartNotice(message: string): Promise<void> {
       isError: false,
     }),
   })
-  applyRestartNotice(document)
-}
-
-async function closeRestartNotice(): Promise<void> {
-  await apiRequest<{ cleared: boolean }>('/api/restart-notice', {
-    method: 'DELETE',
-  })
-  applyRestartNotice(null)
 }
 
 async function refreshLogs(): Promise<void> {
@@ -515,23 +494,38 @@ async function saveManagerSettings(): Promise<void> {
 
   busy.settings = true
   try {
+    const currentServiceId = managerSettings.value.config.service.id
+    if (managerForm.portText.trim() && parsePortText(managerForm.portText) === undefined) {
+      throw new Error('端口必须是正整数。')
+    }
+    const nextPort = parsePortText(managerForm.portText)
+    const nextService = {
+      ...managerSettings.value.config.service,
+      command: managerForm.command.trim(),
+      processName: managerForm.processName.trim(),
+      port: nextPort,
+      args: managerForm.argsText
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      autoStart: managerForm.autoStart,
+      autoRestart: managerForm.autoRestart,
+      healthcheck: {
+        ...managerSettings.value.config.service.healthcheck,
+        url: nextPort ? `http://127.0.0.1:${nextPort}/health` : managerSettings.value.config.service.healthcheck.url,
+      },
+    }
+    const nextServiceItems = managerSettings.value.config.services.items.map((item) =>
+      item.id === currentServiceId ? nextService : item,
+    )
+
     const nextSettings = await apiRequest<ManagerSettingsDocument>('/api/manager/settings', {
       method: 'POST',
       body: JSON.stringify({
-        service: {
-          ...managerSettings.value.config.service,
-          command: managerForm.command.trim(),
-          processName: managerForm.processName.trim(),
-          cwd: managerForm.cwd.trim(),
-          configPath: managerForm.configPath.trim(),
-          configFlag: '',
-          args: managerForm.argsText
-            .split('\n')
-            .map((item) => item.trim())
-            .filter(Boolean),
-          autoStart: managerForm.autoStart,
-          autoRestart: managerForm.autoRestart,
+        services: {
+          items: nextServiceItems,
         },
+        service: nextService,
         shell: managerSettings.value.config.shell,
       }),
     })
@@ -546,6 +540,16 @@ async function saveManagerSettings(): Promise<void> {
   } finally {
     busy.settings = false
   }
+}
+
+function parsePortText(value: string): number | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const parsed = Number(trimmed)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
 async function validateConfig(): Promise<void> {
@@ -644,26 +648,6 @@ async function executeCommandById(commandId: string): Promise<void> {
     shellMessage.value = error instanceof Error ? error.message : '命令执行失败。'
   } finally {
     busy.shell = false
-  }
-}
-
-async function restartFromNotice(): Promise<void> {
-  busy.restartNotice = true
-  try {
-    const result = await apiRequest<ServiceDetail>('/api/openclaw/restart', {
-      method: 'POST',
-    })
-    restartNotice.status = `OpenClaw 已重启，当前状态：${result.status === 'running' ? '运行中' : result.status}`
-    restartNotice.isError = result.status !== 'running'
-    if (result.status === 'running') {
-      await closeRestartNotice()
-    }
-    await refreshLogs()
-  } catch (error) {
-    restartNotice.status = error instanceof Error ? error.message : 'OpenClaw 重启失败。'
-    restartNotice.isError = true
-  } finally {
-    busy.restartNotice = false
   }
 }
 
