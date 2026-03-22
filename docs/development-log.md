@@ -4,6 +4,7 @@
 
 ### 已完成
 
+- 补强 `/api/openclaw/plugins` 的错误可见性：插件列表接口现在单独包了一层 `try/catch`，当 `openclaw plugins list --json` 失败时，会以 `openclaw plugins list failed` 记录一条明确的错误日志，并向前端返回 `OPENCLAW_PLUGINS_LIST_FAILED` 和具体错误消息，不再只剩一条笼统的 500 请求完成日志
 - 修复发布 CLI 可执行权限丢失的问题：将 `scripts/release-cli.mjs` 恢复为可执行文件，并在 `scripts/prepare-release.mjs` 中显式对 release 产物里的 `cli.mjs` 执行 `chmod 755`；避免全局安装后 `/usr/bin/manclaw` 因目标文件不可执行而直接报 `Permission denied`
 - 继续补强技能页运行时目录的回退策略：如果 `openclaw skills list --json` 没返回 `workspaceDir`，且 `openclaw.json -> agents.defaults.workspace` 也未设置，`/api/skills/installed` 现在会按当前 OpenClaw profile 的 home 规则推导默认 workspace（如 `default -> ~/.openclaw/workspace`、命名 profile -> ~/.openclaw-<profile>/workspace`）；这样技能目录仍然围绕 OpenClaw，而不会继续混入 `MANCLAW_HOME`
 - 调整技能页运行时目录的回退策略：当 `openclaw skills list --json` 未返回 `workspaceDir` 时，`/api/skills/installed` 现在会回退到 `openclaw.json -> agents.defaults.workspace` 对应的默认 workspace，而不是继续显示空值；这样运行时技能仍然围绕 OpenClaw 默认工作区展示，同时避免再回退到 `MANCLAW_HOME`

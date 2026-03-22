@@ -112,7 +112,22 @@ app.get('/health', async () => ({
 app.get('/api/system/summary', async () => ok(await manager.getSystemSummary()))
 app.get('/api/openclaw/status', async () => ok(await manager.getServiceStatus()))
 app.get('/api/openclaw/statuses', async () => ok(await manager.getServiceStatuses()))
-app.get('/api/openclaw/plugins', async () => ok(await manager.getOpenClawPlugins()))
+app.get('/api/openclaw/plugins', async (request, reply) => {
+  try {
+    return ok(await manager.getOpenClawPlugins())
+  } catch (error) {
+    app.log.error(
+      {
+        err: error,
+        reqId: request.id,
+        method: request.method,
+        path: request.url.split('?')[0],
+      },
+      'openclaw plugins list failed',
+    )
+    return reply.code(500).send(fail('OPENCLAW_PLUGINS_LIST_FAILED', error instanceof Error ? error.message : 'OpenClaw plugins list failed.'))
+  }
+})
 app.get<{ Params: { id: string } }>('/api/openclaw/plugins/:id', async (request, reply) => {
   try {
     return ok(await manager.getOpenClawPlugin(request.params.id))
