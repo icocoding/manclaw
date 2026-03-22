@@ -4,6 +4,7 @@
 
 ### 已完成
 
+- 将 commit 提交规则写入仓库级 `AGENTS.md`：后续提交时，commit message 必须准确对应当前改动内容；title 用简洁英文短句直接描述目标，涉及规则、文档、脚本和实现联动时应补充 commit body，避免继续使用过于空泛或与实际改动不符的说明
 - 将“文档不得保留环境敏感信息”的约束写入仓库级 `AGENTS.md`：后续更新 README、`docs/`、发布说明和开发记录时，禁止继续写入宿主机绝对路径、用户名目录或私有部署路径；如需举例，统一改为相对路径、通用占位路径或 `~` 形式
 - 清理文档中的环境敏感信息：将文档示例和开发记录里残留的宿主机绝对路径替换为通用路径或相对描述，避免继续暴露本机目录结构；主要涉及 `docs/api.md` 中的 workspace 示例路径，以及开发记录里对静态页和素材文件的机器本地路径描述
 - 拆清发布产物边界：版本 tag 对应的正式 GitHub Release 现在只上传 `manclaw-release-v<version>.zip`；`install-latest-release.sh` 仅通过独立的 `scripts` pre-release 发布并持续覆盖更新，不再作为版本 release 的附件混发
