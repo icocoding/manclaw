@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -29,6 +29,7 @@ await mkdir(artifactsDir, { recursive: true })
 await cp(serverSource, path.join(serverTargetDir, 'index.js'))
 await cp(webSource, webTargetDir, { recursive: true })
 await cp(cliSource, cliTarget)
+await chmod(cliTarget, 0o755)
 
 const releasePackage = {
   name: releasePackageName,
