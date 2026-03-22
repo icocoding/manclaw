@@ -4,6 +4,8 @@
 
 ### 已完成
 
+- 将“文档不得保留环境敏感信息”的约束写入仓库级 `AGENTS.md`：后续更新 README、`docs/`、发布说明和开发记录时，禁止继续写入宿主机绝对路径、用户名目录或私有部署路径；如需举例，统一改为相对路径、通用占位路径或 `~` 形式
+- 清理文档中的环境敏感信息：将文档示例和开发记录里残留的宿主机绝对路径替换为通用路径或相对描述，避免继续暴露本机目录结构；主要涉及 `docs/api.md` 中的 workspace 示例路径，以及开发记录里对静态页和素材文件的机器本地路径描述
 - 拆清发布产物边界：版本 tag 对应的正式 GitHub Release 现在只上传 `manclaw-release-v<version>.zip`；`install-latest-release.sh` 仅通过独立的 `scripts` pre-release 发布并持续覆盖更新，不再作为版本 release 的附件混发
 - 调整发布包全局安装名并补齐自管理命令：发布产物的 npm 包名改为 `manclaw`，不再要求用户执行 `npm uninstall -g manclaw-release`；同时全局 CLI 新增 `check-update / update / uninstall`，可直接检查新版本、下载并安装最新 release、以及停止服务后卸载全局 CLI。对应的 README、发布模板和安装脚本文案也已同步更新
 - 收紧安装文案里的命令形式：官网落地页与 README 的安装/卸载示例不再展示 `bash scripts/...` 这类带仓库目录前缀的命令，统一改成可直接执行的在线脚本形式，减少用户误以为必须先进入源码目录的歧义
@@ -63,8 +65,8 @@
 - 继续修复宣传图顶部副标题溢出：将 `Focused on management goals...` 这行进一步拆成两行并再收一档字号，避免摘要区最下行继续越界
 - 修复宣传图长文案溢出：将右侧顶部摘要和底部定位语拆成两行并同步收字号，避免在当前版式宽度下继续超出卡片边界
 - 调整宣传图文案焦点：去掉技术栈导向的底部说明，左侧主文案改为“目标是什么”，右侧顶部和底部说明改为“提供什么操作价值”，整体聚焦产品目标与功能，而不是实现栈
-- 重做宣传图 [docs/assets/manclaw-promo.svg](docs/assets/manclaw-promo.svg) 的内容与风格：从原先偏铜色功能海报改为更贴近新 logo 的深蓝机械控制台风，文案也收敛为“OpenClaw control layer / Command Your Claw / one operator console”这类更像产品封面的表达，并将右侧信息区改成运行控制、Agent、Channel、Plugin/Skill 四块能力面板
-- 重绘 `ManClaw` 品牌标记：将原来的金铜方章升级为更紧凑的圆形机械徽章，统一为“深蓝核心盘 + 红色机械爪 + 电路化 M + 中央齿轮”语言；同步更新 [apps/web/public/manclaw-mark.svg](apps/web/public/manclaw-mark.svg) 与 [docs/assets/manclaw-promo.svg](docs/assets/manclaw-promo.svg)，让 favicon、侧栏品牌位、README 和宣传图使用同一套视觉
+- 重做宣传图 [docs/assets/manclaw-promo.svg](./assets/manclaw-promo.svg) 的内容与风格：从原先偏铜色功能海报改为更贴近新 logo 的深蓝机械控制台风，文案也收敛为“OpenClaw control layer / Command Your Claw / one operator console”这类更像产品封面的表达，并将右侧信息区改成运行控制、Agent、Channel、Plugin/Skill 四块能力面板
+- 重绘 `ManClaw` 品牌标记：将原来的金铜方章升级为更紧凑的圆形机械徽章，统一为“深蓝核心盘 + 红色机械爪 + 电路化 M + 中央齿轮”语言；同步更新 [apps/web/public/manclaw-mark.svg](../apps/web/public/manclaw-mark.svg) 与 [docs/assets/manclaw-promo.svg](./assets/manclaw-promo.svg)，让 favicon、侧栏品牌位、README 和宣传图使用同一套视觉
 - 继续收口 `清空 Session` 的危险按钮样式：在全局变量覆盖之外，再直接对最终渲染的 `.n-button.danger-action` 背景色与交互态做强制覆盖，绕过 `Naive UI` 内部 token 合成，确保 `Harbor` 下也能看到明确变化
 - 将 `清空 Session` 改为项目内显式危险样式类 `danger-action`：不再仅依赖 `Naive UI` 的 `warning` 主题 token，而是通过全局 CSS 变量覆盖按钮自身的 `--n-color / --n-border / --n-text-color`，确保 `Forge / Harbor` 两套风格都稳定显示不同的不可撤回操作颜色
 - 补齐 `Harbor` 主题下的危险按钮覆盖：除了通用 `warningColor` 之外，再显式覆盖 `Button.colorWarning / borderWarning / textColorWarning` 等组件级 token，确保 `清空 Session` 在 `Harbor` 下也显示预期的琥珀警示色
@@ -112,10 +114,10 @@
 - 新增“撤回上次修改”能力：配置区可直接撤回最近一次 `openclaw.json` 变更；同时回滚前也会先备份当前配置，避免回滚操作本身不可逆
 - Agent 详情新增结构化绑定规则编辑：每个 Agent 现在可维护多条 `bindings`，支持 `channel` 与可选 `accountId`，保存时不再把精细绑定信息压平成纯 channel 列表
 - 记录 Agent tools `allow/deny` 语义：`allow` 用于收窄首次暴露给模型的能力集合，`deny` 为更高优先级的最终禁止项；后续做 token 缩减时应按“候选集 -> allow 收窄 -> deny 剔除 -> 仅注入剩余能力摘要”的顺序实现，而不是让模型先自行读取完整 Skill 文档
-- 在 `manclaw/index.html` 新增独立静态介绍页，以单文件 HTML 形式概述 `ManClaw` 的产品定位、控制面角色与核心能力，便于直接打开预览或单独分发
+- 在独立 `manclaw-web` 仓库新增静态介绍页 `manclaw/index.html`，以单文件 HTML 形式概述 `ManClaw` 的产品定位、控制面角色与核心能力，便于直接打开预览或单独分发
 - 修复静态介绍页中的长路径与内联配置项换行问题：为 `code` 元素补充断词与换行样式，避免窄宽度下路径溢出卡片
 - 修复 `apps/web` 概览页“内部配置”等卡片中的长路径换行问题：为通用 `panel__muted` 文案补充断词与换行样式，避免路径在窄宽度下溢出
-- 将独立介绍页复制到 `manclaw/index.html`，用于在外部 Web 目录直接复用该静态页面
+- 将独立介绍页复制到外部 Web 目录中的 `manclaw/index.html`，用于在独立站点环境直接复用该静态页面
 
 ## 2026-03-19
 
