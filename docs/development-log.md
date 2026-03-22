@@ -4,6 +4,9 @@
 
 ### 已完成
 
+- 修复发布安装后运行时依赖缺失的问题：安装脚本与 `manclaw update` 现在都会先在解压出的 release 目录执行 `npm install --omit=dev`，再进行全局 CLI 安装，避免 `manclaw start` 运行 `server/index.js` 时因为 `@fastify/static` 等运行时依赖未落到 release 目录而直接报 `ERR_MODULE_NOT_FOUND`
+- 调整发布 CLI 的启动输出：`manclaw start` 成功后不再只打印一条 `Logs` 路径，而是与 `manclaw logs` 对齐，直接分别输出 `stdout` 和 `stderr` 日志文件位置，减少安装后排查启动失败时还要再执行一次 `manclaw logs` 的重复操作
+- 改进发布安装脚本缺少依赖时的提示：`scripts/install-latest-release.sh` 现在在缺少 `unzip` 时不再只输出裸的 “Missing required command”，而会直接给出常见系统的安装示例命令，减少首次安装时的卡顿和排查成本
 - 调整左侧菜单顺序为 `Overview -> Models -> Agents -> Channels -> Skills -> Plugins -> Best Practices`：把更常用的配置入口提前，扩展性更强但使用频率相对靠后的 `Plugins` 保持在 `Skills` 之后；同时同步整理前端路由声明顺序，减少导航和代码结构不一致
 - 将 commit 提交规则写入仓库级 `AGENTS.md`：后续提交时，commit message 必须准确对应当前改动内容；title 用简洁英文短句直接描述目标，涉及规则、文档、脚本和实现联动时应补充 commit body，避免继续使用过于空泛或与实际改动不符的说明
 - 将“文档不得保留环境敏感信息”的约束写入仓库级 `AGENTS.md`：后续更新 README、`docs/`、发布说明和开发记录时，禁止继续写入宿主机绝对路径、用户名目录或私有部署路径；如需举例，统一改为相对路径、通用占位路径或 `~` 形式

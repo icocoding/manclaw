@@ -118,7 +118,8 @@ function start() {
 
   console.log(`manclaw started on port ${defaultPort}.`)
   console.log(`PID: ${child.pid}`)
-  console.log(`Logs: ${outLogFile}`)
+  console.log(`stdout: ${outLogFile}`)
+  console.log(`stderr: ${errLogFile}`)
   return 0
 }
 
@@ -295,6 +296,9 @@ async function update() {
     await execFileAsync('unzip', ['-oq', zipPath, '-d', tempRoot])
 
     const releaseDir = path.join(tempRoot, 'manclaw-release')
+    await execFileAsync('npm', ['install', '--omit=dev', '--prefix', releaseDir], {
+      env: process.env,
+    })
     await execFileAsync('npm', ['install', '-g', releaseDir], {
       env: process.env,
     })

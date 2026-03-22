@@ -66,9 +66,31 @@ EOF
   esac
 done
 
+print_missing_command_help() {
+  case "$1" in
+    unzip)
+      cat >&2 <<'EOF'
+Missing required command: unzip
+
+Install unzip and rerun the installer.
+
+Examples:
+  Ubuntu / Debian: sudo apt update && sudo apt install -y unzip
+  CentOS / RHEL:   sudo yum install -y unzip
+  Fedora:          sudo dnf install -y unzip
+  Alpine:          sudo apk add unzip
+  macOS:           brew install unzip
+EOF
+      ;;
+    *)
+      echo "Missing required command: $1" >&2
+      ;;
+  esac
+}
+
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    echo "Missing required command: $1" >&2
+    print_missing_command_help "$1"
     exit 1
   fi
 }
@@ -266,6 +288,8 @@ fi
 log "Release extracted to ${RELEASE_DIR}"
 
 if [[ "$SKIP_INSTALL" != "1" ]]; then
+  log "Installing release dependencies in ${RELEASE_DIR}"
+  npm install --omit=dev --prefix "$RELEASE_DIR"
   log "Installing ManClaw as a global CLI"
   npm install -g "$RELEASE_DIR"
   log "Global CLI installed from ${RELEASE_DIR}"
