@@ -30,11 +30,6 @@
           </label>
 
           <label class="field">
-            <span class="field__label">进程名</span>
-            <n-input v-model:value="managerForm.processName" class="field-control" placeholder="openclaw-gateway-default" />
-          </label>
-
-          <label class="field">
             <span class="field__label">端口</span>
             <n-input v-model:value="managerForm.portText" class="field-control" placeholder="18789" />
           </label>
@@ -226,6 +221,7 @@ import { NButton, NCheckbox, NInput } from 'naive-ui'
 import { RouterLink } from 'vue-router'
 
 import { apiRequest } from '../lib/api'
+import { onServiceChanged } from '../lib/service-events'
 
 import type {
   ConfigDocument,
@@ -279,13 +275,13 @@ const busy = reactive({
 
 const managerForm = reactive({
   command: '',
-  processName: '',
   portText: '',
   argsText: '',
   autoStart: true,
   autoRestart: true,
 })
 let refreshTimer: number | undefined
+let disposeServiceChanged: (() => void) | undefined
 
 const serviceStatusLabel = computed(() => {
   switch (service.value.status) {
@@ -323,7 +319,6 @@ const hasPendingManagerChanges = computed(() => {
   const savedTarget = managerSettings.value.config.service
   return (
     managerForm.command !== savedTarget.command ||
-    managerForm.processName !== savedTarget.processName ||
     managerForm.portText !== (savedTarget.port ? String(savedTarget.port) : '') ||
     managerForm.argsText !== savedTarget.args.join('\n') ||
     managerForm.autoStart !== savedTarget.autoStart ||
@@ -450,7 +445,6 @@ async function refreshAll(): Promise<void> {
 
 function applyManagerSettings(settings: ManagerSettingsDocument): void {
   managerForm.command = settings.config.service.command
-  managerForm.processName = settings.config.service.processName
   managerForm.portText = settings.config.service.port ? String(settings.config.service.port) : ''
   managerForm.argsText = settings.config.service.args.join('\n')
   managerForm.autoStart = settings.config.service.autoStart
@@ -502,7 +496,6 @@ async function saveManagerSettings(): Promise<void> {
     const nextService = {
       ...managerSettings.value.config.service,
       command: managerForm.command.trim(),
-      processName: managerForm.processName.trim(),
       port: nextPort,
       args: managerForm.argsText
         .split('\n')
@@ -653,12 +646,16 @@ async function executeCommandById(commandId: string): Promise<void> {
 
 onMounted(async () => {
   await refreshAll()
+  disposeServiceChanged = onServiceChanged(() => {
+    void refreshAll()
+  })
   refreshTimer = window.setInterval(() => {
     void refreshAll()
   }, 5000)
 })
 
 onUnmounted(() => {
+  disposeServiceChanged?.()
   if (refreshTimer) {
     window.clearInterval(refreshTimer)
   }

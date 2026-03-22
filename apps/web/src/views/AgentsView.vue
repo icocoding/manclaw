@@ -6,14 +6,6 @@
         <h2>Agent 管理</h2>
       </div>
       <div class="hero__actions">
-        <RestartNoticeBar
-          v-if="restartNotice.open"
-          variant="inline"
-          :busy="busy.restartNotice"
-          :message="restartNotice.message"
-          @restart="restartFromNotice"
-          @dismiss="closeRestartNotice"
-        />
         <n-button tertiary :disabled="busy.refresh" @click="refreshAll">
           {{ busy.refresh ? '刷新中...' : '刷新全部' }}
         </n-button>
@@ -68,11 +60,13 @@
 
         <div class="button-row">
           <n-button type="primary" :disabled="busy.save || !hasPendingChanges" @click="saveAgents">
-            {{ busy.save ? '保存中...' : '保存 Agent 配置' }}
+            {{ busy.save ? '保存中...' : hasPendingChanges ? '保存 Agent 变更' : '保存 Agent 配置' }}
           </n-button>
         </div>
 
+        <p v-if="hasPendingChanges" class="status-text status-text--warning">当前有未保存的 Agent 变更，请点击“保存 Agent 变更”。</p>
         <p class="status-text" :class="{ 'status-text--error': messageIsError }">{{ message }}</p>
+        <p v-if="messageUpdatedAt" class="panel__muted">最后提示时间：{{ formatDateTime(messageUpdatedAt) }}</p>
       </article>
 
       <article class="panel">
@@ -97,165 +91,170 @@
         <p class="panel__muted">每个 Agent 可配置多条绑定规则；当前支持 `channel` 和可选 `accountId`。</p>
       </div>
 
-      <article v-if="busy.refresh && agents.length === 0" class="panel panel--nested">
-        <p class="panel__muted">正在读取 `openclaw.json` 中的 `agents` 与 `bindings`，请稍候...</p>
-      </article>
+      <div class="agent-detail-section">
+        <article v-if="busy.refresh && agents.length === 0" class="panel panel--nested">
+          <p class="panel__muted">正在读取 `openclaw.json` 中的 `agents` 与 `bindings`，请稍候...</p>
+        </article>
 
-      <template v-else-if="agents.length">
-        <div class="agent-list">
-          <article v-for="(agent, index) in agents" :key="agent.sourceId || `${agent.id}-${index}`" class="agent-card">
-            <div class="agent-card__head">
-              <div>
-                <div class="agent-card__title">
-                  <h3>{{ agent.id || `agent-${index + 1}` }}</h3>
-                  <span v-if="agent.id === defaultAgentId" class="badge badge--running">默认</span>
-                </div>
-                <p class="panel__muted">#{{ index + 1 }} · sourceId={{ agent.sourceId || 'new' }}</p>
-              </div>
-
-              <div class="button-row">
-                <n-button tertiary size="small" :disabled="busy.save" @click="copyAgent(agent)">复制</n-button>
-                <n-button tertiary size="small" :disabled="busy.save || agents.length === 1" @click="removeAgent(index)">删除</n-button>
-              </div>
-            </div>
-
-            <div class="form-grid">
-              <label class="field">
-                <span class="field__label">Agent ID</span>
-                <n-input v-model:value="agent.id" class="field-control" placeholder="main" />
-              </label>
-
-              <label class="field">
-                <span class="field__label">Workspace</span>
-                <n-input v-model:value="agent.workspace" class="field-control" placeholder="留空则继承默认值" />
-              </label>
-
-              <label class="field">
-                <span class="field__label">模型</span>
-                <n-select
-                  :value="agent.modelPrimary || null"
-                  class="field-control"
-                  clearable
-                  filterable
-                  :options="modelOptions"
-                  placeholder="留空则继承默认值"
-                  @update:value="(value) => { agent.modelPrimary = String(value ?? '') }"
-                />
-              </label>
-
-              <label class="field field--span-2">
-                <span class="field__label">Compaction</span>
-                <n-input v-model:value="agent.compactionMode" class="field-control" placeholder="留空则继承默认值" />
-              </label>
-            </div>
-
-            <div class="agent-bindings">
-              <div class="section-header">
+        <template v-else-if="agents.length">
+          <div class="agent-list">
+            <article v-for="(agent, index) in agents" :key="agent.sourceId || `${agent.id}-${index}`" class="agent-card">
+              <div class="agent-card__head">
                 <div>
-                  <p class="panel__label">绑定规则</p>
-                  <h3>按 Agent 维护 channel 绑定</h3>
+                  <div class="agent-card__title">
+                    <h3>{{ agent.id || `agent-${index + 1}` }}</h3>
+                    <span v-if="agent.id === defaultAgentId" class="badge badge--running">默认</span>
+                  </div>
+                  <p class="panel__muted">#{{ index + 1 }} · sourceId={{ agent.sourceId || 'new' }}</p>
                 </div>
-                <p class="panel__muted">保存时会直接写回 `bindings[*].match`。可用 `accountId` 做更细的 Feishu 路由。</p>
-              </div>
 
-              <div v-if="agent.bindings.length" class="agent-binding-list">
-                <div v-for="(binding, bindingIndex) in agent.bindings" :key="binding.id" class="agent-binding-row">
-                  <n-input v-model:value="binding.channel" class="field-control" placeholder="channel，例如 feishu" />
-                  <n-input v-model:value="binding.accountId" class="field-control" placeholder="accountId，可留空" />
-                  <n-button tertiary size="small" :disabled="busy.save" @click="removeBinding(agent, bindingIndex)">删除</n-button>
+                <div class="button-row">
+                  <n-button tertiary size="small" :disabled="busy.save" @click="copyAgent(agent)">复制</n-button>
+                  <n-button tertiary size="small" :disabled="busy.save || agents.length === 1" @click="removeAgent(index)">删除</n-button>
                 </div>
-              </div>
-              <p v-else class="panel__muted">当前没有绑定规则。</p>
-
-              <div class="agent-bindings__actions">
-                <n-button tertiary size="small" :disabled="busy.save" @click="addBinding(agent)">新增绑定</n-button>
-              </div>
-            </div>
-
-            <div class="agent-tools">
-              <div class="section-header">
-                <div>
-                  <p class="panel__label">Tools策略</p>
-                  <h3>按 Agent 限制工具</h3>
-                </div>
-                <p class="panel__muted">直接写入 `agents.list[].tools.profile / allow / deny`。留空时表示不覆盖该 Agent 的 tools 限制。</p>
               </div>
 
               <div class="form-grid">
                 <label class="field">
-                  <span class="field__label">Tools Profile</span>
+                  <span class="field__label">Agent ID</span>
+                  <n-input v-model:value="agent.id" class="field-control" placeholder="main" />
+                </label>
+
+                <label class="field">
+                  <span class="field__label">Workspace</span>
+                  <n-input v-model:value="agent.workspace" class="field-control" placeholder="留空则继承默认值" />
+                </label>
+
+                <label class="field">
+                  <span class="field__label">模型</span>
                   <n-select
-                    :value="agent.toolsProfile || null"
+                    :value="agent.modelPrimary || null"
                     class="field-control"
                     clearable
-                    :options="toolsProfileOptions"
-                    placeholder="选择 tools profile"
-                    @update:value="(value) => { agent.toolsProfile = String(value ?? '') }"
+                    filterable
+                    :options="modelOptions"
+                    placeholder="留空则继承默认值"
+                    @update:value="(value) => { agent.modelPrimary = String(value ?? '') }"
                   />
                 </label>
 
                 <label class="field field--span-2">
-                  <span class="field__label">Allow</span>
-                  <n-input v-model:value="agent.toolsAllowText" class="field-control" placeholder="exec, web, group:plugins" />
-                </label>
-
-                <label class="field field--span-2">
-                  <span class="field__label">Deny</span>
-                  <n-input v-model:value="agent.toolsDenyText" class="field-control" placeholder="browser, exec" />
+                  <span class="field__label">Compaction</span>
+                  <n-input v-model:value="agent.compactionMode" class="field-control" placeholder="留空则继承默认值" />
                 </label>
               </div>
-            </div>
 
-            <div class="agent-sessions">
-              <div class="section-header">
-                <div>
-                  <p class="panel__label">Session</p>
-                  <h3>{{ agent.sessionCount ?? 0 }} 个会话</h3>
+              <div class="agent-bindings">
+                <div class="section-header">
+                  <div>
+                    <p class="panel__label">绑定规则</p>
+                    <h3>按 Agent 维护 channel 绑定</h3>
+                  </div>
+                  <p class="panel__muted">保存时会直接写回 `bindings[*].match`。可用 `accountId` 做更细的 Feishu 路由。</p>
                 </div>
-                <p class="panel__muted">清空后会删除该 agent 的 `sessions.json` 与会话 transcript 文件，用于强制从干净上下文重新开始。</p>
+
+                <div v-if="agent.bindings.length" class="agent-binding-list">
+                  <div v-for="(binding, bindingIndex) in agent.bindings" :key="binding.id" class="agent-binding-row">
+                    <n-input v-model:value="binding.channel" class="field-control" placeholder="channel，例如 feishu" />
+                    <n-input v-model:value="binding.accountId" class="field-control" placeholder="accountId，可留空" />
+                    <n-button tertiary size="small" :disabled="busy.save" @click="removeBinding(agent, bindingIndex)">删除</n-button>
+                  </div>
+                </div>
+                <p v-else class="panel__muted">当前没有绑定规则。</p>
+
+                <div class="agent-bindings__actions">
+                  <n-button tertiary size="small" :disabled="busy.save" @click="addBinding(agent)">新增绑定</n-button>
+                </div>
               </div>
 
-              <p class="panel__muted">Store：{{ agent.sessionStorePath || '--' }}</p>
-              <p class="panel__muted">Transcript 文件数：{{ agent.transcriptFileCount ?? 0 }}</p>
+              <div class="agent-tools">
+                <div class="section-header">
+                  <div>
+                    <p class="panel__label">Tools策略</p>
+                    <h3>按 Agent 限制工具</h3>
+                  </div>
+                  <p class="panel__muted">直接写入 `agents.list[].tools.profile / allow / deny`。留空时表示不覆盖该 Agent 的 tools 限制。</p>
+                </div>
 
-              <div class="agent-sessions__actions">
-                <n-popconfirm
-                  v-model:show="sessionConfirmVisible[agent.id]"
-                  positive-text="确认清空"
-                  negative-text="取消"
-                  @positive-click="confirmClearAgentSessions(agent)"
-                >
-                  <template #trigger>
-                    <n-button
-                      class="danger-action"
-                      type="warning"
-                      size="small"
-                      :disabled="busy.sessionAction || !agent.id.trim() || !(agent.sessionCount || agent.transcriptFileCount)"
-                    >
-                      {{ busy.sessionAction && busy.sessionAgentId === agent.id ? '清空中...' : '清空 Session' }}
-                    </n-button>
-                  </template>
-                  清空 Agent `{{ agent.id }}` 的所有会话和 transcript？
-                </n-popconfirm>
+                <div class="form-grid">
+                  <label class="field">
+                    <span class="field__label">Tools Profile</span>
+                    <n-select
+                      :value="agent.toolsProfile || null"
+                      class="field-control"
+                      clearable
+                      :options="toolsProfileOptions"
+                      placeholder="选择 tools profile"
+                      @update:value="(value) => { agent.toolsProfile = String(value ?? '') }"
+                    />
+                  </label>
+
+                  <label class="field field--span-2">
+                    <span class="field__label">Allow</span>
+                    <n-input v-model:value="agent.toolsAllowText" class="field-control" placeholder="exec, web, group:plugins" />
+                  </label>
+
+                  <label class="field field--span-2">
+                    <span class="field__label">Deny</span>
+                    <n-input v-model:value="agent.toolsDenyText" class="field-control" placeholder="browser, exec" />
+                  </label>
+                </div>
               </div>
 
-              <p v-if="agent.sessionMessage" class="status-text" :class="{ 'status-text--error': agent.sessionMessageIsError }">
-                {{ agent.sessionMessage }}
-              </p>
-            </div>
+              <div class="agent-sessions">
+                <div class="section-header">
+                  <div>
+                    <p class="panel__label">Session</p>
+                    <h3>{{ agent.sessionCount ?? 0 }} 个会话</h3>
+                  </div>
+                  <p class="panel__muted">清空后会删除该 agent 的 `sessions.json` 与会话 transcript 文件，用于强制从干净上下文重新开始。</p>
+                </div>
 
-            <div class="agent-card__footer">
-              <n-button type="primary" size="small" :disabled="busy.save || !hasPendingChanges" @click="saveAgents">
-                {{ busy.save ? '保存中...' : '保存 Agent 配置' }}
-              </n-button>
-            </div>
-          </article>
-        </div>
-        <div class="agent-list__footer">
-          <n-button tertiary :disabled="busy.save" @click="addAgent">新增 Agent</n-button>
-        </div>
-      </template>
-      <p v-else class="panel__muted">当前没有 Agent 条目。</p>
+                <p class="panel__muted">Store：{{ agent.sessionStorePath || '--' }}</p>
+                <p class="panel__muted">Transcript 文件数：{{ agent.transcriptFileCount ?? 0 }}</p>
+
+                <div class="agent-sessions__actions">
+                  <n-popconfirm
+                    v-model:show="sessionConfirmVisible[agent.id]"
+                    positive-text="确认清空"
+                    negative-text="取消"
+                    @positive-click="confirmClearAgentSessions(agent)"
+                  >
+                    <template #trigger>
+                      <n-button
+                        class="danger-action"
+                        type="warning"
+                        size="small"
+                        :disabled="busy.sessionAction || !agent.id.trim() || !(agent.sessionCount || agent.transcriptFileCount)"
+                      >
+                        {{ busy.sessionAction && busy.sessionAgentId === agent.id ? '清空中...' : '清空 Session' }}
+                      </n-button>
+                    </template>
+                    清空 Agent `{{ agent.id }}` 的所有会话和 transcript？
+                  </n-popconfirm>
+                </div>
+
+                <p v-if="agent.sessionMessage" class="status-text" :class="{ 'status-text--error': agent.sessionMessageIsError }">
+                  {{ agent.sessionMessage }}
+                </p>
+              </div>
+
+              <div class="agent-card__footer">
+                <n-button type="primary" size="small" :disabled="busy.save || !hasPendingChanges" @click="saveAgents">
+                  {{ busy.save ? '保存中...' : hasPendingChanges ? '保存 Agent 变更' : '保存 Agent 配置' }}
+                </n-button>
+              </div>
+            </article>
+          </div>
+          <div class="agent-list__footer">
+            <n-button tertiary :disabled="busy.save" @click="addAgent">新增 Agent</n-button>
+            <n-button type="primary" :disabled="busy.save || !hasPendingChanges" @click="saveAgents">
+              {{ busy.save ? '保存中...' : '保存设置' }}
+            </n-button>
+          </div>
+        </template>
+        <p v-else class="panel__muted">当前没有 Agent 条目。</p>
+      </div>
     </section>
 
     <section class="two-column">
@@ -294,7 +293,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { NButton, NInput, NPopconfirm, NSelect } from 'naive-ui'
 
 import type {
@@ -304,12 +303,10 @@ import type {
   AgentToolsProfile,
   ConfigDocument,
   QuickModelConfigDocument,
-  RestartNoticeDocument,
-  ServiceDetail,
 } from '@manclaw/shared'
 
-import RestartNoticeBar from '../components/RestartNoticeBar.vue'
 import { apiRequest } from '../lib/api'
+import { onServiceChanged } from '../lib/service-events'
 
 interface EditableAgent extends AgentConfigEntry {
   toolsProfile: string
@@ -336,18 +333,12 @@ const busy = reactive({
   save: false,
   sessionAction: false,
   sessionAgentId: '',
-  restartNotice: false,
 })
 const sessionConfirmVisible = reactive<Record<string, boolean>>({})
-const restartNotice = reactive({
-  open: false,
-  message: '',
-  status: 'Agent 配置已更新，建议重启 OpenClaw 以立即生效。',
-  isError: false,
-})
 
 let localAgentSeed = 0
 let localBindingSeed = 0
+let disposeServiceChanged: (() => void) | undefined
 const toolsProfileOptions: Array<{ label: string; value: AgentToolsProfile }> = [
   { label: 'minimal', value: 'minimal' },
   { label: 'coding', value: 'coding' },
@@ -376,6 +367,22 @@ const availableChannelSummary = computed(() => (availableChannels.value.length >
 const messageIsError = computed(() => /失败|错误|required|duplicate|duplicated|invalid/i.test(message.value))
 const currentPayloadSnapshot = computed(() => JSON.stringify(buildAgentPayload()))
 const hasPendingChanges = computed(() => currentPayloadSnapshot.value !== lastSavedSnapshot.value)
+const messageUpdatedAt = ref('')
+
+function formatDateTime(value?: string): string {
+  if (!value) {
+    return '--'
+  }
+
+  return new Date(value).toLocaleString('zh-CN', {
+    hour12: false,
+  })
+}
+
+function updateMessage(text: string): void {
+  message.value = text
+  messageUpdatedAt.value = new Date().toISOString()
+}
 
 function parseChannels(value: string): string[] {
   return Array.from(
@@ -544,45 +551,18 @@ function applyDocument(document: AgentConfigDocument): void {
   lastSavedSnapshot.value = JSON.stringify(buildAgentPayload())
 }
 
-function applyRestartNotice(document: RestartNoticeDocument | null): void {
-  restartNotice.open = Boolean(document)
-  restartNotice.message = document?.message ?? ''
-  restartNotice.status = document?.status ?? 'Agent 配置已更新，建议重启 OpenClaw 以立即生效。'
-  restartNotice.isError = document?.isError ?? false
-}
-
-async function openRestartNotice(messageText: string): Promise<void> {
-  const document = await apiRequest<RestartNoticeDocument>('/api/restart-notice', {
-    method: 'POST',
-    body: JSON.stringify({
-      message: messageText,
-      status: 'Agent 配置已更新，建议重启 OpenClaw 以立即生效。',
-      isError: false,
-    }),
-  })
-  applyRestartNotice(document)
-}
-
-async function closeRestartNotice(): Promise<void> {
-  await apiRequest<{ cleared: boolean }>('/api/restart-notice', {
-    method: 'DELETE',
-  })
-  applyRestartNotice(null)
-}
-
 async function refreshAll(): Promise<void> {
   busy.refresh = true
   try {
-    const [agentsDocument, configDocument, restartNoticeDocument, quickModelDocument] = await Promise.all([
+    const [agentsDocument, configDocument, quickModelDocument] = await Promise.all([
       apiRequest<AgentConfigDocument>('/api/agents/current'),
       apiRequest<ConfigDocument>('/api/config/current'),
-      apiRequest<RestartNoticeDocument | null>('/api/restart-notice'),
       apiRequest<QuickModelConfigDocument>('/api/model-setup/current'),
     ])
 
     if (!busy.save) {
       applyDocument(agentsDocument)
-      message.value = '已读取当前 Agent 配置。'
+      updateMessage('已读取当前 Agent 配置。')
     }
     modelOptions.value = quickModelDocument.entries
       .map((entry) => {
@@ -595,9 +575,8 @@ async function refreshAll(): Promise<void> {
       })
       .sort((left, right) => left.label.localeCompare(right.label))
     configContent.value = configDocument.content
-    applyRestartNotice(restartNoticeDocument)
   } catch (error) {
-    message.value = error instanceof Error ? error.message : '读取 Agent 配置失败。'
+    updateMessage(error instanceof Error ? error.message : '读取 Agent 配置失败。')
   } finally {
     busy.refresh = false
   }
@@ -609,6 +588,7 @@ function addAgent(): void {
   if (!defaultAgentId.value) {
     defaultAgentId.value = agentId
   }
+  updateMessage(`已新增 Agent ${agentId}，变更尚未保存。`)
 }
 
 function copyAgent(agent: EditableAgent): void {
@@ -620,6 +600,7 @@ function copyAgent(agent: EditableAgent): void {
       id: copiedId,
     }),
   )
+  updateMessage(`已复制 Agent 为 ${copiedId}，变更尚未保存。`)
 }
 
 function removeAgent(index: number): void {
@@ -627,14 +608,17 @@ function removeAgent(index: number): void {
   if (removed && removed.id === defaultAgentId.value) {
     defaultAgentId.value = agents.value[0]?.id ?? ''
   }
+  updateMessage(`已删除 Agent ${removed?.id || `#${index + 1}`}，变更尚未保存。`)
 }
 
 function addBinding(agent: EditableAgent): void {
   agent.bindings.push(createEditableBinding())
+  updateMessage(`已为 Agent ${agent.id || '未命名 Agent'} 新增绑定，变更尚未保存。`)
 }
 
 function removeBinding(agent: EditableAgent, index: number): void {
   agent.bindings.splice(index, 1)
+  updateMessage(`已从 Agent ${agent.id || '未命名 Agent'} 删除绑定，变更尚未保存。`)
 }
 
 async function saveAgents(): Promise<void> {
@@ -648,12 +632,11 @@ async function saveAgents(): Promise<void> {
     })
 
     applyDocument(document)
-    message.value = 'Agent 配置已保存。'
-    await openRestartNotice('Agent 配置已更新。建议现在重启 OpenClaw。')
+    updateMessage('Agent 配置已保存。')
     const configDocument = await apiRequest<ConfigDocument>('/api/config/current')
     configContent.value = configDocument.content
   } catch (error) {
-    message.value = error instanceof Error ? error.message : '保存 Agent 配置失败。'
+    updateMessage(error instanceof Error ? error.message : '保存 Agent 配置失败。')
   } finally {
     busy.save = false
   }
@@ -694,27 +677,15 @@ async function confirmClearAgentSessions(agent: EditableAgent): Promise<void> {
   await clearAgentSessions(agent)
 }
 
-async function restartFromNotice(): Promise<void> {
-  busy.restartNotice = true
-  try {
-    const result = await apiRequest<ServiceDetail>('/api/openclaw/restart', {
-      method: 'POST',
-    })
-    restartNotice.status = `OpenClaw 已重启，当前状态：${result.status === 'running' ? '运行中' : result.status}`
-    restartNotice.isError = result.status !== 'running'
-    if (result.status === 'running') {
-      await closeRestartNotice()
-    }
-  } catch (error) {
-    restartNotice.status = error instanceof Error ? error.message : 'OpenClaw 重启失败。'
-    restartNotice.isError = true
-  } finally {
-    busy.restartNotice = false
-  }
-}
-
 onMounted(async () => {
   await refreshAll()
+  disposeServiceChanged = onServiceChanged(() => {
+    void refreshAll()
+  })
+})
+
+onUnmounted(() => {
+  disposeServiceChanged?.()
 })
 </script>
 
@@ -724,17 +695,32 @@ onMounted(async () => {
   gap: 18px;
 }
 
-.agent-list__footer {
+.agent-detail-section {
+  display: grid;
+  gap: 18px;
   margin-top: 18px;
+}
+
+.agent-list__footer {
+  margin-top: 4px;
 }
 
 .agent-card {
   display: grid;
   gap: 16px;
   padding: 18px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 78%, var(--accent) 22%);
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-1) 72%, var(--accent) 28%),
+      color-mix(in srgb, var(--bg-1) 76%, var(--accent-strong) 24%)
+    ),
+    color-mix(in srgb, var(--bg-1) 88%, var(--accent) 12%);
+  box-shadow:
+    0 18px 32px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .agent-card__footer {

@@ -368,7 +368,7 @@ a {
   border-radius: 999px;
   color: var(--text-2);
   font-size: 0.78rem;
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--bg-1) 82%, var(--accent) 18%);
 }
 
 .service-profile-form {
@@ -396,9 +396,10 @@ a {
   justify-content: space-between;
   gap: 16px;
   padding: 14px 16px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 76%, var(--accent) 24%);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.025);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-1) 78%, var(--accent) 22%), color-mix(in srgb, var(--bg-1) 84%, var(--accent-strong) 16%));
 }
 
 .service-profile-item__head {
@@ -434,14 +435,14 @@ a {
   display: grid;
   gap: 6px;
   padding: 10px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line) 82%, var(--accent) 18%);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--bg-1) 84%, var(--accent) 16%);
 }
 
 .service-dock__item--active {
   border-color: var(--line-strong);
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--bg-1) 72%, var(--accent-strong) 28%);
 }
 
 .service-dock__item-head {
@@ -891,7 +892,7 @@ a {
   border: 1px solid var(--line);
   border-radius: 16px;
   color: var(--text-0);
-  background: rgba(17, 14, 12, 0.82);
+  background: color-mix(in srgb, var(--bg-2) 88%, var(--accent) 12%);
 }
 
 .field-control {
@@ -1015,8 +1016,8 @@ a {
   gap: 12px;
   padding: 14px;
   border-radius: 16px;
-  background: rgba(255, 248, 238, 0.04);
-  border: 1px solid rgba(255, 248, 238, 0.04);
+  background: color-mix(in srgb, var(--bg-1) 82%, var(--accent) 18%);
+  border: 1px solid color-mix(in srgb, var(--line) 82%, var(--accent) 18%);
 }
 
 .skills-toolbar {
@@ -1039,8 +1040,8 @@ a {
   gap: 12px;
   padding: 16px;
   border-radius: 18px;
-  border: 1px solid rgba(255, 248, 238, 0.06);
-  background: rgba(255, 248, 238, 0.035);
+  border: 1px solid color-mix(in srgb, var(--line) 82%, var(--accent) 18%);
+  background: color-mix(in srgb, var(--bg-1) 84%, var(--accent) 16%);
   cursor: pointer;
 }
 
@@ -1081,8 +1082,8 @@ a {
   margin-top: 18px;
   padding: 18px;
   border-radius: 18px;
-  border: 1px solid rgba(255, 248, 238, 0.06);
-  background: rgba(255, 248, 238, 0.035);
+  border: 1px solid color-mix(in srgb, var(--line) 82%, var(--accent) 18%);
+  background: color-mix(in srgb, var(--bg-1) 82%, var(--accent-strong) 18%);
 }
 
 .skill-detail__head {
@@ -1116,8 +1117,8 @@ a {
   gap: 6px;
   padding: 10px 12px;
   border-radius: 14px;
-  background: rgba(255, 248, 238, 0.04);
-  border: 1px solid rgba(255, 248, 238, 0.04);
+  background: color-mix(in srgb, var(--bg-1) 84%, var(--accent) 16%);
+  border: 1px solid color-mix(in srgb, var(--line) 84%, var(--accent) 16%);
 }
 
 .log-entry__meta {

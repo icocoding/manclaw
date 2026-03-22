@@ -155,6 +155,7 @@ import type {
 } from '@manclaw/shared'
 
 import { apiRequest } from '../lib/api'
+import { emitServiceChanged } from '../lib/service-events'
 import RestartNoticeBar from './RestartNoticeBar.vue'
 
 const services = ref<ServiceDetail[]>([])
@@ -378,6 +379,7 @@ async function switchProfile(nextId: string): Promise<void> {
         },
       }),
     })
+    emitServiceChanged({ serviceId: target.id })
     await refreshStatus()
   } finally {
     busy.switching = false

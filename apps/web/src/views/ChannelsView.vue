@@ -6,14 +6,6 @@
         <h2>渠道配置</h2>
       </div>
       <div class="hero__actions">
-        <RestartNoticeBar
-          v-if="restartNotice.open"
-          variant="inline"
-          :busy="busy.restartNotice"
-          :message="restartNotice.message"
-          @restart="restartFromNotice"
-          @dismiss="closeRestartNotice"
-        />
         <n-button tertiary :disabled="busy.refresh" @click="refreshAll">
           {{ busy.refresh ? '刷新中...' : '刷新全部' }}
         </n-button>
@@ -153,7 +145,12 @@
           <n-button tertiary :disabled="busy.save" @click="addChannel">新增 Channel</n-button>
         </div>
       </template>
-      <p v-else class="panel__muted">当前没有 Channel 条目。</p>
+      <div v-else class="channel-empty-state">
+        <p class="panel__muted">当前没有 Channel 条目。</p>
+        <div class="channel-list__footer">
+          <n-button tertiary :disabled="busy.save" @click="addChannel">新增 Channel</n-button>
+        </div>
+      </div>
     </section>
 
     <section class="two-column">
@@ -172,19 +169,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { NButton, NInput, NSelect } from 'naive-ui'
 
 import type {
   ChannelBindingEntry,
   ChannelConfigDocument,
   ChannelConfigEntry,
-  RestartNoticeDocument,
-  ServiceDetail,
 } from '@manclaw/shared'
 
-import RestartNoticeBar from '../components/RestartNoticeBar.vue'
 import { apiRequest } from '../lib/api'
+import { onServiceChanged } from '../lib/service-events'
 
 const channels = ref<ChannelConfigEntry[]>([])
 const availableAgents = ref<ChannelConfigDocument['availableAgents']>([])
@@ -193,17 +188,11 @@ const message = ref('在这里维护多个 Channels，并配置它们与 Agent �
 const busy = reactive({
   refresh: false,
   save: false,
-  restartNotice: false,
-})
-const restartNotice = reactive({
-  open: false,
-  message: '',
-  status: 'Channels 配置已更新，建议重启 OpenClaw 以立即生效。',
-  isError: false,
 })
 
 let localChannelSeed = 0
 let localBindingSeed = 0
+let disposeServiceChanged: (() => void) | undefined
 
 const agentOptions = computed(() => availableAgents.value.map((item) => ({ label: item.label, value: item.id })))
 const totalBindings = computed(() => channels.value.reduce((sum, item) => sum + normalizeBindings(item.id, item.bindings).length, 0))
@@ -313,45 +302,15 @@ function applyDocument(document: ChannelConfigDocument): void {
   lastSavedSnapshot.value = JSON.stringify(buildPayload())
 }
 
-function applyRestartNotice(document: RestartNoticeDocument | null): void {
-  restartNotice.open = Boolean(document)
-  restartNotice.message = document?.message ?? ''
-  restartNotice.status = document?.status ?? 'Channels 配置已更新，建议重启 OpenClaw 以立即生效。'
-  restartNotice.isError = document?.isError ?? false
-}
-
-async function openRestartNotice(messageText: string): Promise<void> {
-  const document = await apiRequest<RestartNoticeDocument>('/api/restart-notice', {
-    method: 'POST',
-    body: JSON.stringify({
-      message: messageText,
-      status: 'Channels 配置已更新，建议重启 OpenClaw 以立即生效。',
-      isError: false,
-    }),
-  })
-  applyRestartNotice(document)
-}
-
-async function closeRestartNotice(): Promise<void> {
-  await apiRequest<{ cleared: boolean }>('/api/restart-notice', {
-    method: 'DELETE',
-  })
-  applyRestartNotice(null)
-}
-
 async function refreshAll(): Promise<void> {
   busy.refresh = true
   try {
-    const [channelsDocument, restartNoticeDocument] = await Promise.all([
-      apiRequest<ChannelConfigDocument>('/api/channels/current'),
-      apiRequest<RestartNoticeDocument | null>('/api/restart-notice'),
-    ])
+    const channelsDocument = await apiRequest<ChannelConfigDocument>('/api/channels/current')
 
     if (!busy.save) {
       applyDocument(channelsDocument)
       message.value = '已读取当前 Channels 配置。'
     }
-    applyRestartNotice(restartNoticeDocument)
   } catch (error) {
     message.value = error instanceof Error ? error.message : '读取 Channels 配置失败。'
   } finally {
@@ -402,7 +361,6 @@ async function saveChannels(): Promise<void> {
 
     applyDocument(document)
     message.value = 'Channels 配置已保存。'
-    await openRestartNotice('Channels 配置已更新。建议现在重启 OpenClaw。')
   } catch (error) {
     message.value = error instanceof Error ? error.message : '保存 Channels 配置失败。'
   } finally {
@@ -410,27 +368,15 @@ async function saveChannels(): Promise<void> {
   }
 }
 
-async function restartFromNotice(): Promise<void> {
-  busy.restartNotice = true
-  try {
-    const result = await apiRequest<ServiceDetail>('/api/openclaw/restart', {
-      method: 'POST',
-    })
-    restartNotice.status = `OpenClaw 已重启，当前状态：${result.status === 'running' ? '运行中' : result.status}`
-    restartNotice.isError = result.status !== 'running'
-    if (result.status === 'running') {
-      await closeRestartNotice()
-    }
-  } catch (error) {
-    restartNotice.status = error instanceof Error ? error.message : 'OpenClaw 重启失败。'
-    restartNotice.isError = true
-  } finally {
-    busy.restartNotice = false
-  }
-}
-
 onMounted(async () => {
   await refreshAll()
+  disposeServiceChanged = onServiceChanged(() => {
+    void refreshAll()
+  })
+})
+
+onUnmounted(() => {
+  disposeServiceChanged?.()
 })
 </script>
 
@@ -450,13 +396,23 @@ onMounted(async () => {
   margin-top: 18px;
 }
 
+.channel-empty-state {
+  display: grid;
+  gap: 12px;
+}
+
 .channel-card {
   display: grid;
   gap: 16px;
   padding: 18px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 76%, var(--accent) 24%);
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-1) 74%, var(--accent) 26%),
+      color-mix(in srgb, var(--bg-1) 80%, var(--accent-strong) 20%)
+    );
 }
 
 .channel-card__head {

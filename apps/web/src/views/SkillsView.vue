@@ -6,14 +6,6 @@
         <h2>技能管理</h2>
       </div>
       <div class="hero__actions">
-        <RestartNoticeBar
-          v-if="restartPrompt.open"
-          variant="inline"
-          :busy="busy.restart"
-          :message="restartPrompt.message"
-          @restart="restartOpenClaw"
-          @dismiss="closeRestartPrompt"
-        />
         <n-button tertiary :disabled="busy.refresh" @click="refreshAll">
           {{ busy.refresh ? '刷新中...' : '刷新' }}
         </n-button>
@@ -283,19 +275,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { NButton, NCheckbox, NInput, NSelect, NTabPane, NTabs } from 'naive-ui'
 
 import { apiRequest } from '../lib/api'
-import RestartNoticeBar from '../components/RestartNoticeBar.vue'
+import { onServiceChanged } from '../lib/service-events'
 
 import type {
   AgentConfigDocument,
   InstalledSkillsDocument,
   RegistrySkillDetail,
-  RestartNoticeDocument,
-  ServiceDetail,
   SkillsConfigDocument,
   SkillMutationResult,
 } from '@manclaw/shared'
@@ -317,12 +306,6 @@ const runtimeSkillFilter = ref('')
 const allowBundledDraft = ref<string[]>([])
 const inspectMessage = ref('选择 Agent 后，可先查询 skill 说明，再决定是否安装。')
 const mutationMessage = ref('技能管理页支持按 Agent 安装技能，同时保留查看、启用/禁用和 allowlist 管理。')
-const restartPrompt = reactive({
-  open: false,
-  message: '',
-  status: '技能变更后建议重启 OpenClaw，使技能加载状态立即生效。',
-  isError: false,
-})
 const busy = reactive({
   refresh: false,
   directInstall: false,
@@ -330,8 +313,8 @@ const busy = reactive({
   install: false,
   mutate: false,
   skillsConfig: false,
-  restart: false,
 })
+let disposeServiceChanged: (() => void) | undefined
 
 const inspectIsError = computed(() => /失败|错误|限流|blocked|拦截|可疑|not found|not be installed/i.test(inspectMessage.value))
 const mutationIsError = computed(() => /失败|错误|限流|blocked|拦截|可疑|not found|not be installed/i.test(mutationMessage.value))
@@ -405,13 +388,6 @@ function formatDateTime(value?: string): string {
   })
 }
 
-function applyRestartPrompt(document: RestartNoticeDocument | null): void {
-  restartPrompt.open = Boolean(document)
-  restartPrompt.message = document?.message ?? ''
-  restartPrompt.status = document?.status ?? '技能变更后建议重启 OpenClaw，使技能加载状态立即生效。'
-  restartPrompt.isError = document?.isError ?? false
-}
-
 function getCaseConflictLabel(slug: string): string {
   const lower = slug.toLowerCase()
   const conflicts = (selectedAgent.value?.workspaceSkills ?? [])
@@ -424,25 +400,6 @@ function getCaseConflictLabel(slug: string): string {
   }
 
   return `存在大小写冲突：${uniqueConflicts.join(' / ')}`
-}
-
-async function closeRestartPrompt(): Promise<void> {
-  await apiRequest<{ cleared: boolean }>('/api/restart-notice', {
-    method: 'DELETE',
-  })
-  applyRestartPrompt(null)
-}
-
-async function openRestartPrompt(message: string): Promise<void> {
-  const document = await apiRequest<RestartNoticeDocument>('/api/restart-notice', {
-    method: 'POST',
-    body: JSON.stringify({
-      message,
-      status: '技能变更后建议重启 OpenClaw，使技能加载状态立即生效。',
-      isError: false,
-    }),
-  })
-  applyRestartPrompt(document)
 }
 
 async function refreshInstalled(): Promise<void> {
@@ -465,15 +422,11 @@ async function refreshSkillsConfig(): Promise<void> {
 async function refreshAll(): Promise<void> {
   busy.refresh = true
   try {
-    const [, , , restartNoticeDocument] = await Promise.all([
+    await Promise.all([
       refreshInstalled(),
       refreshAgents(),
       refreshSkillsConfig(),
-      apiRequest<RestartNoticeDocument | null>('/api/restart-notice'),
     ])
-    if (!busy.restart) {
-      applyRestartPrompt(restartNoticeDocument)
-    }
   } catch (error) {
     mutationMessage.value = error instanceof Error ? error.message : '技能列表刷新失败。'
   } finally {
@@ -526,7 +479,6 @@ async function installSkill(): Promise<void> {
     mutationMessage.value = result.message
     inspectMessage.value = `已安装到 Agent ${agentId}：${result.slug}。`
     await refreshSkillPanels()
-    await openRestartPrompt(`Agent ${agentId} 的技能 ${result.slug} 已安装。建议现在重启 OpenClaw。`)
   } catch (error) {
     mutationMessage.value = error instanceof Error ? error.message : '技能安装失败。'
   } finally {
@@ -557,7 +509,6 @@ async function installDirectSkill(): Promise<void> {
     skillDetail.value = undefined
     forceInstall.value = false
     await refreshSkillPanels()
-    await openRestartPrompt(`Agent ${agentId} 的技能 ${result.slug} 已安装。建议现在重启 OpenClaw。`)
   } catch (error) {
     const message = error instanceof Error ? error.message : '技能安装失败。'
     mutationMessage.value = message
@@ -588,7 +539,6 @@ async function deleteSelectedAgentSkill(slug: string): Promise<void> {
 
     mutationMessage.value = result.message
     void refreshSkillPanels()
-    await openRestartPrompt(`Agent ${agentId} 的技能 ${slug} 已变更。建议现在重启 OpenClaw。`)
   } catch (error) {
     if (targetAgent && previousWorkspaceSkills) {
       targetAgent.workspaceSkills = previousWorkspaceSkills
@@ -607,7 +557,6 @@ async function disableSkill(slug: string): Promise<void> {
     })
     mutationMessage.value = result.message
     await refreshSkillPanels()
-    await openRestartPrompt(`技能 ${slug} 已禁用。建议现在重启 OpenClaw。`)
   } catch (error) {
     mutationMessage.value = error instanceof Error ? error.message : '技能禁用失败。'
   } finally {
@@ -623,7 +572,6 @@ async function updateSkill(slug: string): Promise<void> {
     })
     mutationMessage.value = result.message
     await refreshSkillPanels()
-    await openRestartPrompt(`技能 ${slug} 已更新。建议现在重启 OpenClaw。`)
   } catch (error) {
     mutationMessage.value = error instanceof Error ? error.message : '技能更新失败。'
   } finally {
@@ -639,7 +587,6 @@ async function enableSkill(slug: string): Promise<void> {
     })
     mutationMessage.value = result.message
     await refreshSkillPanels()
-    await openRestartPrompt(`技能 ${slug} 已启用。建议现在重启 OpenClaw。`)
   } catch (error) {
     mutationMessage.value = error instanceof Error ? error.message : '技能启用失败。'
   } finally {
@@ -655,7 +602,6 @@ async function deleteSkill(slug: string): Promise<void> {
     })
     mutationMessage.value = result.message
     await refreshSkillPanels()
-    await openRestartPrompt(`技能 ${slug} 已删除。建议现在重启 OpenClaw。`)
   } catch (error) {
     mutationMessage.value = error instanceof Error ? error.message : '技能删除失败。'
   } finally {
@@ -675,7 +621,6 @@ async function saveAllowBundled(): Promise<void> {
     allowBundledDraft.value = document.allowBundled
     mutationMessage.value = '系统技能 allowlist 已保存。'
     await refreshInstalled()
-    await openRestartPrompt('系统技能 allowlist 已更新。建议现在重启 OpenClaw。')
   } catch (error) {
     mutationMessage.value = error instanceof Error ? error.message : '系统技能 allowlist 保存失败。'
   } finally {
@@ -683,28 +628,15 @@ async function saveAllowBundled(): Promise<void> {
   }
 }
 
-async function restartOpenClaw(): Promise<void> {
-  busy.restart = true
-  try {
-    const result = await apiRequest<ServiceDetail>('/api/openclaw/restart', {
-      method: 'POST',
-    })
-    restartPrompt.status = `OpenClaw 已重启，当前状态：${result.status === 'running' ? '运行中' : result.status}`
-    restartPrompt.isError = result.status !== 'running'
-    mutationMessage.value = '已重启 OpenClaw。'
-    if (result.status === 'running') {
-      await closeRestartPrompt()
-    }
-  } catch (error) {
-    restartPrompt.status = error instanceof Error ? error.message : 'OpenClaw 重启失败。'
-    restartPrompt.isError = true
-  } finally {
-    busy.restart = false
-  }
-}
-
 onMounted(async () => {
   await refreshAll()
+  disposeServiceChanged = onServiceChanged(() => {
+    void refreshAll()
+  })
+})
+
+onUnmounted(() => {
+  disposeServiceChanged?.()
 })
 </script>
 
@@ -716,9 +648,9 @@ onMounted(async () => {
 .skills-loading {
   margin: 12px 0 14px;
   padding: 12px 14px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line) 84%, var(--accent) 16%);
   border-radius: 14px;
-  background: var(--bg-3);
+  background: color-mix(in srgb, var(--bg-1) 84%, var(--accent) 16%);
 }
 
 .skills-runtime-controls {

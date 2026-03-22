@@ -42,7 +42,7 @@
         <div class="section-header">
           <div>
             <p class="panel__label">Feishu Channel</p>
-            <h3>一键新增飞书渠道</h3>
+            <h3>新增飞书渠道</h3>
           </div>
           <p class="panel__muted">填写飞书机器人的 `App ID` 和 `App Secret`，直接生成可编辑的 Feishu 渠道配置。</p>
         </div>
@@ -67,7 +67,7 @@
         <p class="panel__muted">会自动使用 `feishu`、`feishu-2`、`feishu-3` 这类可用 ID，并生成 `enabled/defaultAccount/accounts/tools` 完整结构；保存后会自动跳到 Channels 页面继续编辑。</p>
         <div class="button-row practices-actions">
           <n-button type="primary" :disabled="busy.channels || !canCreateFeishuChannel" @click="createFeishuChannel">
-            {{ busy.channels ? '创建中...' : '一键新增飞书渠道' }}
+            {{ busy.channels ? '创建中...' : '新增飞书渠道' }}
           </n-button>
           <RouterLink class="nav-action" to="/channels">前往 Channels</RouterLink>
         </div>
@@ -180,13 +180,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { NButton, NInput } from 'naive-ui'
 
 import type { AgentConfigDocument, ChannelConfigDocument, ConfigDocument, FeishuToolsConfigDocument } from '@manclaw/shared'
 
 import { apiRequest } from '../lib/api'
+import { onServiceChanged } from '../lib/service-events'
 
 const router = useRouter()
 
@@ -219,6 +220,7 @@ type SessionAgentItem = {
 }
 
 const agentSessions = ref<SessionAgentItem[]>([])
+let disposeServiceChanged: (() => void) | undefined
 const busy = reactive({
   feishuTools: false,
   channels: false,
@@ -547,6 +549,13 @@ async function clearAgentSessions(agent: SessionAgentItem): Promise<void> {
 
 onMounted(async () => {
   await Promise.all([refreshFeishuTools(), refreshAgentSessions()])
+  disposeServiceChanged = onServiceChanged(() => {
+    void Promise.all([refreshFeishuTools(), refreshAgentSessions()])
+  })
+})
+
+onUnmounted(() => {
+  disposeServiceChanged?.()
 })
 </script>
 
@@ -568,6 +577,16 @@ onMounted(async () => {
 .practices-preset-grid {
   display: grid;
   gap: 14px;
+}
+
+.practices-preset-grid > .panel {
+  border-color: color-mix(in srgb, var(--line-strong) 82%, var(--accent) 18%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-1) 84%, var(--accent) 16%),
+      color-mix(in srgb, var(--bg-1) 89%, var(--accent-strong) 11%)
+    );
 }
 
 .practices-panel {
@@ -597,6 +616,13 @@ onMounted(async () => {
   display: grid;
   gap: 8px;
   padding: 16px 18px;
+  border-color: color-mix(in srgb, var(--line-strong) 82%, var(--accent) 18%);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-1) 84%, var(--accent) 16%),
+      color-mix(in srgb, var(--bg-1) 89%, var(--accent-strong) 11%)
+    );
 }
 
 .session-cleanup-card__head {

@@ -12,6 +12,17 @@
 - 调整 `Profiles 管理` 的新增语义：复制 Profile 与共享 workspace 现在拆成两种互斥模式。`sourceId` 用于完整复制源 profile 的配置与 workspace；`workspaceSourceId` 用于仅共享另一个 profile 的 workspace，不再允许“复制 Profile 时再勾选共享 workspace”这种混合状态
 - 放宽 `Profiles 管理` 弹窗布局：弹窗宽度上调到更大的桌面尺寸，新增表单改成更疏的双列布局，profile 列表增加滚动区和更大的卡片内边距，减少当前管理窗口过于紧凑的问题
 - 修正 `Profiles 管理` 表单网格：之前用 `.field-control:last-of-type` 让底部元素跨整行，误把第二个下拉框也撑成整行；现改为只让提交按钮占满整行，两个下拉框恢复并排显示
+- 去掉 Overview 接入设置里的“进程名”输入：当前运行态识别已经主要依赖 `serviceId / profile / port / pid` 等信息，`processName` 更接近内部兼容字段；前端不再继续暴露这个容易误导的配置项
+- 修复 Channels 页空状态缺少入口的问题：`新增 Channel` 按钮之前被包在 `channels.length > 0` 的分支里，导致空列表时没有任何创建入口；现在空状态下也会显示新增按钮
+- 调整 Agents 页详情块层级：取消把全部 Agent 内容包进同一个深色大容器，改为保持标题区原样，并让每个 Agent 详情卡片自身使用更明确的主题染色背景、边框和阴影，避免多个详情块视觉上黏成一整片，也避免继续发黑脱离主题的问题
+- 统一全站内部块的主题层级：将日志、只读编辑区、配置记录、技能卡片、Profile 卡片、Channels/Models/Best Practices 等内部块从原来的偏灰偏黑底统一调整为基于当前主题变量的染色背景与边框，减少页面之间层级风格不一致的问题
+- 增加前端 `service-changed` 事件：左侧服务控制切换 Profile 成功后会广播当前 service 变更，`Overview / Models / Agents / Channels / Plugins / Skills / Best Practices` 都会立即重新读取当前 profile 数据，不再出现右侧页面停留在旧 profile 内容、最佳实践操作看起来未关联当前 profile 的问题
+- 收紧最佳实践页的飞书渠道文案：将“`一键新增飞书渠道`”统一改成“`新增飞书渠道`”，保留自动生成最小可编辑配置的行为，但避免按钮和标题表达过满
+- 补齐最佳实践页 `预设 Agent` 子卡片的主题层级：为 `Messaging / Minimal` 两个 `panel--nested` 子模块补上与其它内部块一致的主题染色背景和边框，避免该区域仍停留在旧底色
+- 收紧 Agents 页删除后的保存反馈：保存按钮在存在未保存改动时会明确显示“保存 Agent 变更”，顶部同步出现“当前有未保存的 Agent 变更”提示；新增/复制/删除 Agent 与绑定操作后也会立刻写入明确说明，并附上最后提示时间，避免错误或提示消息悬空不清晰
+- 为 Agents 列表底部补充就近保存入口：`新增 Agent` 按钮旁新增一个明确的 `保存设置` 按钮，避免用户在底部操作后还要回到顶部保存
+- 移除页面头部右上角重复的“需要重启”提示：`Models / Agents / Channels / Skills` 页不再各自渲染 `RestartNoticeBar`，相关页面内重复的重启提示状态与操作逻辑一并去掉；重启入口统一只保留在左侧服务控制面板
+- 微调最佳实践页二级模块亮度：将 `预设 Agent` 与 `Session Cleanup` 子卡片的主题染色比例再下调一档，保留层级但减少过亮、过抢主面板的问题
 - 将 runtime 层从“单 current service”改成“按 serviceId 独立托管”：`serviceState` 与 `.manclaw/runtime-state.json` 都改为多 service 结构，server 热重载后会分别恢复每个受管 gateway 的 PID；切换当前 profile 不再顺手把其他已运行 profile 挤掉，多个 gateway 可以被 `manclaw` 同时监管
 - 补强多实例进程发现：除了按受管 PID、service manager 和 `ps` 参数匹配外，新增基于 gateway 监听端口的兜底发现；当 `openclaw-gateway` 子进程本身参数不完整、但端口已被目标 profile 占用时，`manclaw` 也能识别该实例已在运行，避免再次误起同端口的第二个 gateway
 - 调整接入设置中的 `cwd` 回填来源：当当前 service 已经有可用配置文件时，`/api/manager/settings` 会从 `openclaw.json -> agents.defaults.workspace` 读取默认 workspace 并覆盖展示值；若当前 profile 尚无可用配置文件，则继续保留已保存的 `cwd`，不做额外猜测

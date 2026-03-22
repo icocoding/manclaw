@@ -234,11 +234,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { NButton, NCheckbox, NInput, NModal, NPopconfirm } from 'naive-ui'
 
 import { apiRequest } from '../lib/api'
+import { onServiceChanged } from '../lib/service-events'
 
 import type {
   ConfigDocument,
@@ -268,6 +269,7 @@ const feishuToolsMessage = ref('读取当前飞书 tools 配置。')
 const feishuToolsIsError = ref(false)
 const installCommand = ref('')
 const installCommandMessage = ref('可在这里输入插件安装命令。')
+let disposeServiceChanged: (() => void) | undefined
 const installCommandOutput = ref('')
 const installCommandIsError = ref(false)
 const toolsModalVisible = ref(false)
@@ -548,6 +550,13 @@ async function confirmSetPluginEnabled(pluginId: string, enabled: boolean): Prom
 
 onMounted(async () => {
   await Promise.all([refreshPlugins(), refreshFeishuTools()])
+  disposeServiceChanged = onServiceChanged(() => {
+    void Promise.all([refreshPlugins(), refreshFeishuTools()])
+  })
+})
+
+onUnmounted(() => {
+  disposeServiceChanged?.()
 })
 </script>
 
@@ -595,7 +604,7 @@ onMounted(async () => {
 
 .plugin-table__detail-row td {
   padding-top: 0;
-  background: color-mix(in srgb, var(--bg-3) 60%, transparent);
+  background: color-mix(in srgb, var(--bg-1) 82%, var(--accent) 18%);
 }
 
 .plugin-table__detail {

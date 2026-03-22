@@ -6,14 +6,6 @@
         <h2>模型配置</h2>
       </div>
       <div class="hero__actions">
-        <RestartNoticeBar
-          v-if="restartNotice.open"
-          variant="inline"
-          :busy="busy.restartNotice"
-          :message="restartNotice.message"
-          @restart="restartFromNotice"
-          @dismiss="closeRestartNotice"
-        />
         <n-button tertiary :disabled="busy.refresh" @click="refreshAll">
           {{ busy.refresh ? '刷新中...' : '刷新全部' }}
         </n-button>
@@ -177,20 +169,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { NButton, NInput, NSelect } from 'naive-ui'
 import { RouterLink } from 'vue-router'
 
-import RestartNoticeBar from '../components/RestartNoticeBar.vue'
 import { apiRequest } from '../lib/api'
+import { onServiceChanged } from '../lib/service-events'
 
 import type {
   ConfigDocument,
   QuickModelConfigPayload,
   QuickModelConfigDocument,
   QuickModelProvider,
-  RestartNoticeDocument,
-  ServiceDetail,
 } from '@manclaw/shared'
 
 interface ModelProviderGroup {
@@ -209,19 +199,13 @@ const configContent = ref('')
 const busy = reactive({
   refresh: false,
   quickModel: false,
-  restartNotice: false,
-})
-const restartNotice = reactive({
-  open: false,
-  message: '',
-  status: '模型配置已更新，建议重启 OpenClaw 以立即生效。',
-  isError: false,
 })
 
 const providerGroups = ref<ModelProviderGroup[]>([])
 const defaultModelKey = ref('')
 const expandedGroupIds = ref<string[]>([])
 const recentlyAddedGroupId = ref('')
+let disposeServiceChanged: (() => void) | undefined
 const quickProviderOptions = computed(() => quickModelProviders.value.map((provider) => ({
   label: provider.label,
   value: provider.id,
@@ -463,39 +447,12 @@ function applyQuickModelSettings(document: QuickModelConfigDocument): void {
   normalizeDefaultModelSelection()
 }
 
-function applyRestartNotice(document: RestartNoticeDocument | null): void {
-  restartNotice.open = Boolean(document)
-  restartNotice.message = document?.message ?? ''
-  restartNotice.status = document?.status ?? '模型配置已更新，建议重启 OpenClaw 以立即生效。'
-  restartNotice.isError = document?.isError ?? false
-}
-
-async function openRestartNotice(message: string): Promise<void> {
-  const document = await apiRequest<RestartNoticeDocument>('/api/restart-notice', {
-    method: 'POST',
-    body: JSON.stringify({
-      message,
-      status: '模型配置已更新，建议重启 OpenClaw 以立即生效。',
-      isError: false,
-    }),
-  })
-  applyRestartNotice(document)
-}
-
-async function closeRestartNotice(): Promise<void> {
-  await apiRequest<{ cleared: boolean }>('/api/restart-notice', {
-    method: 'DELETE',
-  })
-  applyRestartNotice(null)
-}
-
 async function refreshAll(): Promise<void> {
   busy.refresh = true
   try {
-    const [quickModel, currentConfig, restartNoticeDocument] = await Promise.all([
+    const [quickModel, currentConfig] = await Promise.all([
       apiRequest<QuickModelConfigDocument>('/api/model-setup/current'),
       apiRequest<ConfigDocument>('/api/config/current'),
-      apiRequest<RestartNoticeDocument | null>('/api/restart-notice'),
     ])
 
     quickModelProviders.value = quickModel.availableProviders
@@ -503,9 +460,6 @@ async function refreshAll(): Promise<void> {
       applyQuickModelSettings(quickModel)
     }
     configContent.value = currentConfig.content
-    if (!busy.restartNotice) {
-      applyRestartNotice(restartNoticeDocument)
-    }
   } catch (error) {
     quickModelMessage.value = error instanceof Error ? error.message : '模型信息刷新失败。'
   } finally {
@@ -551,7 +505,6 @@ async function applyQuickModelSetup(): Promise<void> {
     configContent.value = config.content
     quickModelMessage.value = '模型配置已写入 openclaw.json。'
     await refreshAll()
-    await openRestartNotice('模型配置已更新。建议现在重启 OpenClaw。')
   } catch (error) {
     quickModelMessage.value = error instanceof Error ? error.message : '模型配置失败。'
   } finally {
@@ -559,27 +512,15 @@ async function applyQuickModelSetup(): Promise<void> {
   }
 }
 
-async function restartFromNotice(): Promise<void> {
-  busy.restartNotice = true
-  try {
-    const result = await apiRequest<ServiceDetail>('/api/openclaw/restart', {
-      method: 'POST',
-    })
-    restartNotice.status = `OpenClaw 已重启，当前状态：${result.status === 'running' ? '运行中' : result.status}`
-    restartNotice.isError = result.status !== 'running'
-    if (result.status === 'running') {
-      await closeRestartNotice()
-    }
-  } catch (error) {
-    restartNotice.status = error instanceof Error ? error.message : 'OpenClaw 重启失败。'
-    restartNotice.isError = true
-  } finally {
-    busy.restartNotice = false
-  }
-}
-
 onMounted(async () => {
   await refreshAll()
+  disposeServiceChanged = onServiceChanged(() => {
+    void refreshAll()
+  })
+})
+
+onUnmounted(() => {
+  disposeServiceChanged?.()
 })
 </script>
 
@@ -601,9 +542,14 @@ onMounted(async () => {
 }
 
 .model-row {
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line-strong) 76%, var(--accent) 24%);
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-1) 78%, var(--accent) 22%),
+      color-mix(in srgb, var(--bg-1) 84%, var(--accent-strong) 16%)
+    );
 }
 
 .model-row--new {
@@ -647,10 +593,10 @@ onMounted(async () => {
   align-items: center;
   min-height: 34px;
   padding: 0 12px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line) 84%, var(--accent) 16%);
   border-radius: 999px;
   color: var(--text-1);
-  background: var(--bg-3);
+  background: color-mix(in srgb, var(--bg-1) 84%, var(--accent) 16%);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
