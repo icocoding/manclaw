@@ -4,6 +4,13 @@
 
 ### 已完成
 
+- 调整宣传图顶部摘要卡内部排版：将状态点、装饰条和标题文案整体右移下移，并缩短装饰条长度，避免标题首行与左侧图形元素发生碰撞
+- 放大宣传图右侧信息面板：整体外框横向和纵向都扩大一档，同时把第一个摘要子卡片单独加高，给顶部说明文案留出更稳定的展示空间
+- 继续修复宣传图顶部副标题溢出：将 `Focused on management goals...` 这行进一步拆成两行并再收一档字号，避免摘要区最下行继续越界
+- 修复宣传图长文案溢出：将右侧顶部摘要和底部定位语拆成两行并同步收字号，避免在当前版式宽度下继续超出卡片边界
+- 调整宣传图文案焦点：去掉技术栈导向的底部说明，左侧主文案改为“目标是什么”，右侧顶部和底部说明改为“提供什么操作价值”，整体聚焦产品目标与功能，而不是实现栈
+- 重做宣传图 [docs/assets/manclaw-promo.svg](docs/assets/manclaw-promo.svg) 的内容与风格：从原先偏铜色功能海报改为更贴近新 logo 的深蓝机械控制台风，文案也收敛为“OpenClaw control layer / Command Your Claw / one operator console”这类更像产品封面的表达，并将右侧信息区改成运行控制、Agent、Channel、Plugin/Skill 四块能力面板
+- 重绘 `ManClaw` 品牌标记：将原来的金铜方章升级为更紧凑的圆形机械徽章，统一为“深蓝核心盘 + 红色机械爪 + 电路化 M + 中央齿轮”语言；同步更新 [apps/web/public/manclaw-mark.svg](apps/web/public/manclaw-mark.svg) 与 [docs/assets/manclaw-promo.svg](docs/assets/manclaw-promo.svg)，让 favicon、侧栏品牌位、README 和宣传图使用同一套视觉
 - 继续收口 `清空 Session` 的危险按钮样式：在全局变量覆盖之外，再直接对最终渲染的 `.n-button.danger-action` 背景色与交互态做强制覆盖，绕过 `Naive UI` 内部 token 合成，确保 `Harbor` 下也能看到明确变化
 - 将 `清空 Session` 改为项目内显式危险样式类 `danger-action`：不再仅依赖 `Naive UI` 的 `warning` 主题 token，而是通过全局 CSS 变量覆盖按钮自身的 `--n-color / --n-border / --n-text-color`，确保 `Forge / Harbor` 两套风格都稳定显示不同的不可撤回操作颜色
 - 补齐 `Harbor` 主题下的危险按钮覆盖：除了通用 `warningColor` 之外，再显式覆盖 `Button.colorWarning / borderWarning / textColorWarning` 等组件级 token，确保 `清空 Session` 在 `Harbor` 下也显示预期的琥珀警示色
