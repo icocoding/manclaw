@@ -71,30 +71,21 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           TAG="v${VERSION}"
           ZIP_PATH="release-artifacts/manclaw-release-v${VERSION}.zip"
-          INSTALL_SCRIPT="scripts/install-latest-release.sh"
 
           if [[ ! -f "${ZIP_PATH}" ]]; then
             echo "Expected release artifact not found: ${ZIP_PATH}" >&2
             exit 1
           fi
 
-          if [[ ! -f "${INSTALL_SCRIPT}" ]]; then
-            echo "Expected installer script not found: ${INSTALL_SCRIPT}" >&2
-            exit 1
-          fi
-
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
           echo "zip_path=${ZIP_PATH}" >> "${GITHUB_OUTPUT}"
-          echo "install_script=${INSTALL_SCRIPT}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: manclaw-release-${{ steps.meta.outputs.version }}
-          path: |
-            ${{ steps.meta.outputs.zip_path }}
-            ${{ steps.meta.outputs.install_script }}
+          path: ${{ steps.meta.outputs.zip_path }}
 
       - name: Configure Git identity
         run: |
@@ -115,7 +106,7 @@ jobs:
         with:
           tag: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.tag }}
-          artifacts: ${{ steps.meta.outputs.zip_path }},${{ steps.meta.outputs.install_script }}
+          artifacts: ${{ steps.meta.outputs.zip_path }}
           artifactErrorsFailBuild: true
           allowUpdates: true
           replacesArtifacts: true

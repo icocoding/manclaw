@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile)
 const rootDir = process.cwd()
 const rootPackage = JSON.parse(await readFile(path.join(rootDir, 'package.json'), 'utf8'))
 const releaseName = 'manclaw-release'
+const releasePackageName = 'manclaw'
 const releaseVersion = rootPackage.version
 const releaseDir = path.join(rootDir, releaseName)
 const artifactsDir = path.join(rootDir, 'release-artifacts')
@@ -30,7 +31,7 @@ await cp(webSource, webTargetDir, { recursive: true })
 await cp(cliSource, cliTarget)
 
 const releasePackage = {
-  name: releaseName,
+  name: releasePackageName,
   version: releaseVersion,
   private: true,
   type: 'module',
@@ -65,12 +66,15 @@ npm install -g .
 manclaw start
 manclaw status
 manclaw stop
+manclaw check-update
+manclaw update
+manclaw uninstall
 \`\`\`
 
 Uninstall the global CLI:
 
 \`\`\`bash
-npm uninstall -g manclaw-release
+npm uninstall -g manclaw
 \`\`\`
 
 By default, runtime files are stored under \`~/.manclaw-home\`.

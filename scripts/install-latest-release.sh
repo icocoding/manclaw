@@ -123,7 +123,7 @@ uninstall_manclaw() {
   release_dir="${TARGET_DIR_ABS}/manclaw-release"
 
   log "Uninstalling global ManClaw CLI"
-  npm uninstall -g manclaw-release >/dev/null 2>&1 || true
+  npm uninstall -g manclaw >/dev/null 2>&1 || true
 
   if [[ "$REMOVE_FILES" == "1" ]]; then
     if [[ -d "$release_dir" ]]; then
@@ -286,6 +286,9 @@ Control with global CLI:
   manclaw restart
   manclaw stop
   manclaw info
+  manclaw check-update
+  manclaw update
+  manclaw uninstall
 
 If you skipped global install:
   cd "${RELEASE_DIR}" && npm install --omit=dev && npm start
@@ -301,8 +304,8 @@ Update later:
   curl -fsSL https://github.com/${DEFAULT_REPO}/releases/download/scripts/install-latest-release.sh | bash -s -- --target-dir "${TARGET_DIR_ABS}"
 
 Uninstall later:
-  bash scripts/install-latest-release.sh uninstall --target-dir "${TARGET_DIR_ABS}"
-  bash scripts/install-latest-release.sh uninstall --target-dir "${TARGET_DIR_ABS}" --remove-files
+  curl -fsSL https://github.com/${DEFAULT_REPO}/releases/download/scripts/install-latest-release.sh | bash -s -- uninstall --target-dir "${TARGET_DIR_ABS}"
+  curl -fsSL https://github.com/${DEFAULT_REPO}/releases/download/scripts/install-latest-release.sh | bash -s -- uninstall --target-dir "${TARGET_DIR_ABS}" --remove-files
 
 Open:
   http://localhost:18300

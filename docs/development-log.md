@@ -4,6 +4,9 @@
 
 ### 已完成
 
+- 拆清发布产物边界：版本 tag 对应的正式 GitHub Release 现在只上传 `manclaw-release-v<version>.zip`；`install-latest-release.sh` 仅通过独立的 `scripts` pre-release 发布并持续覆盖更新，不再作为版本 release 的附件混发
+- 调整发布包全局安装名并补齐自管理命令：发布产物的 npm 包名改为 `manclaw`，不再要求用户执行 `npm uninstall -g manclaw-release`；同时全局 CLI 新增 `check-update / update / uninstall`，可直接检查新版本、下载并安装最新 release、以及停止服务后卸载全局 CLI。对应的 README、发布模板和安装脚本文案也已同步更新
+- 收紧安装文案里的命令形式：官网落地页与 README 的安装/卸载示例不再展示 `bash scripts/...` 这类带仓库目录前缀的命令，统一改成可直接执行的在线脚本形式，减少用户误以为必须先进入源码目录的歧义
 - 将“release”的协作语义固定到仓库级 `AGENTS.md`：后续在 `manclaw` 仓库内，当用户直接说“release”时，默认按 git 触发发布处理，即优先执行 `scripts/trigger-git-release.sh` 或等价的 `[release]` 空提交推送流程，不再临时解释成仅本地打包或其他发布动作
 - 增加 git 触发发布脚本：新增 `scripts/trigger-git-release.sh`，默认会在 `master` 上创建一个包含 `[release]` 的空提交并推送到 `origin/master`，用于显式触发 GitHub Release pipeline，而不需要手工记忆空提交命令；README 的发布说明也已同步补充
 - 扩展 shell 安装脚本的生命周期支持：`scripts/install-latest-release.sh` 现在支持显式 `install / uninstall` 两种动作；`uninstall` 会卸载全局 `manclaw-release`，并可通过 `--remove-files` 一并删除目标目录下解压出的 `manclaw-release/` 发布目录。根 README 与发布 README 模板也已同步补充卸载说明，避免脚本和文档脱节

@@ -163,7 +163,7 @@ pnpm release:prepare
   - `pnpm release:prepare`
   - 生成 `release-artifacts/manclaw-release-v<version>.zip`
   - 发布或更新 GitHub Release
-  - 附带上传 `install-latest-release.sh`
+  - 版本 release 只上传 `manclaw-release-v<version>.zip`
 
 另外还有一条独立的脚本预发布规则：
 
@@ -202,6 +202,9 @@ cd manclaw-release
 npm install -g .
 manclaw start
 manclaw status
+manclaw check-update
+manclaw update
+manclaw uninstall
 manclaw restart
 manclaw stop
 ```
@@ -221,26 +224,34 @@ python3 scripts/install-latest-release.py
 也可以使用 shell 版本：
 
 ```bash
-bash scripts/install-latest-release.sh
+curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash
 ```
 
 不带动作时，shell 脚本会提示你选择“安装”或“卸载”；也可以显式传：
 
 ```bash
-bash scripts/install-latest-release.sh install
-bash scripts/install-latest-release.sh uninstall
+curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash -s -- install
+curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash -s -- uninstall
 ```
 
 如果要卸载全局 `manclaw`：
 
 ```bash
-bash scripts/install-latest-release.sh uninstall
+curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash -s -- uninstall
+```
+
+如果已经装好全局 CLI，也可以直接使用：
+
+```bash
+manclaw check-update
+manclaw update
+manclaw uninstall
 ```
 
 如果连解压出来的发布目录也一起删除：
 
 ```bash
-bash scripts/install-latest-release.sh uninstall --target-dir . --remove-files
+curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash -s -- uninstall --target-dir . --remove-files
 ```
 
 执行完成后可直接使用：
@@ -257,7 +268,7 @@ MANCLAW_RELEASE_REPO=owner/name python3 scripts/install-latest-release.py
 ```
 
 ```bash
-MANCLAW_RELEASE_REPO=owner/name bash scripts/install-latest-release.sh
+MANCLAW_RELEASE_REPO=owner/name curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash
 ```
 
 如果你是从 fork 仓库发布，请把命令里的仓库改成你自己的，或设置：
