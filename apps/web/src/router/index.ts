@@ -44,14 +44,6 @@ export const router = createRouter({
       },
     },
     {
-      path: '/best-practices',
-      name: 'best-practices',
-      component: BestPracticesView,
-      meta: {
-        title: 'ManClaw - Best Practices',
-      },
-    },
-    {
       path: '/skills',
       name: 'skills',
       component: SkillsView,
@@ -65,6 +57,14 @@ export const router = createRouter({
       component: PluginsView,
       meta: {
         title: 'ManClaw - Plugins',
+      },
+    },
+    {
+      path: '/best-practices',
+      name: 'best-practices',
+      component: BestPracticesView,
+      meta: {
+        title: 'ManClaw - Best Practices',
       },
     },
   ],

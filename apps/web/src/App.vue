@@ -22,8 +22,8 @@
             <RouterLink to="/models">Models</RouterLink>
             <RouterLink to="/agents">Agents</RouterLink>
             <RouterLink to="/channels">Channels</RouterLink>
-            <RouterLink to="/plugins">Plugins</RouterLink>
             <RouterLink to="/skills">Skills</RouterLink>
+            <RouterLink to="/plugins">Plugins</RouterLink>
             <RouterLink to="/best-practices">Best Practices</RouterLink>
           </nav>
 
