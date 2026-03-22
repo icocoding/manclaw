@@ -67,6 +67,12 @@ manclaw status
 manclaw stop
 \`\`\`
 
+Uninstall the global CLI:
+
+\`\`\`bash
+npm uninstall -g manclaw-release
+\`\`\`
+
 By default, runtime files are stored under \`~/.manclaw-home\`.
 You can override this with \`MANCLAW_HOME=/path/to/home\`.
 

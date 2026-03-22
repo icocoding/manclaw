@@ -4,6 +4,8 @@
 
 ### 已完成
 
+- 扩展 shell 安装脚本的生命周期支持：`scripts/install-latest-release.sh` 现在支持显式 `install / uninstall` 两种动作；`uninstall` 会卸载全局 `manclaw-release`，并可通过 `--remove-files` 一并删除目标目录下解压出的 `manclaw-release/` 发布目录。根 README 与发布 README 模板也已同步补充卸载说明，避免脚本和文档脱节
+- 调整 shell 安装脚本交互方式：当 `scripts/install-latest-release.sh` 未显式传入 `install / uninstall` 且处于交互式 shell 时，会先提示选择“安装”或“卸载”；非交互场景仍默认走 `install`，以保持 `curl | bash` 和 CI 脚本兼容
 - 修复 `Profiles 管理` 新增 profile 只写 `manclaw` 配置、不初始化 OpenClaw profile 的问题：左侧弹窗新增现在改走独立 `/api/manager/profiles` 接口，后端会先执行 `openclaw --profile <id> onboard --mode local --non-interactive --accept-risk ...` 初始化 profile，成功后才写入 `.manclaw/config.json`；若 onboard 失败会直接阻断落库并把错误回显到弹窗。同时当前 profile 启动前也会自动补一次初始化，未初始化状态在服务控制里会明确提示
 - 修复 `default` 等当前 service 明明已有 `openclaw.json`、但 Overview 仍显示“当前 profile 尚未发现可用配置文件”的问题：`/api/manager/settings` 现在在当前 service 的 `configPath` 为空时，会调用 `openclaw config file` 发现真实配置路径并持久化回 `.manclaw/config.json`；后续模型配置与配置编辑页面即可正常读取
 - 增加受管 gateway PID 持久化：`manclaw` 现在会把最后一次受管 OpenClaw 进程的 `pid + serviceId + startedAt` 写入 `.manclaw/runtime-state.json`，server 热重载或重启后会先恢复并校验这份 PID，再决定是否启动新的 gateway，减少开发时因内存态丢失导致的重复拉起

@@ -4,8 +4,25 @@ set -euo pipefail
 DEFAULT_REPO="icocoding/manclaw"
 REPO="${MANCLAW_RELEASE_REPO:-$DEFAULT_REPO}"
 TARGET_DIR="."
+ACTION=""
 SKIP_INSTALL="0"
+REMOVE_FILES="0"
 USING_DEFAULT_REPO="1"
+ACTION_SPECIFIED="0"
+
+if [[ $# -gt 0 && "${1:-}" != "" && "${1:0:1}" != "-" ]]; then
+  case "$1" in
+    install|uninstall)
+      ACTION="$1"
+      ACTION_SPECIFIED="1"
+      shift
+      ;;
+    *)
+      echo "Unknown action: $1" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,12 +39,22 @@ while [[ $# -gt 0 ]]; do
       SKIP_INSTALL="1"
       shift
       ;;
+    --remove-files)
+      REMOVE_FILES="1"
+      shift
+      ;;
     -h|--help)
       cat <<'EOF'
-Usage: install-latest-release.sh [--repo owner/name] [--target-dir DIR] [--skip-install]
+Usage: install-latest-release.sh [install|uninstall] [--repo owner/name] [--target-dir DIR] [--skip-install] [--remove-files]
 
 Download the latest ManClaw release zip from GitHub releases, extract it,
-and install it as a global CLI by default.
+and install it as a global CLI by default. If no action is passed in an
+interactive shell, the script will prompt you to choose install or uninstall.
+
+Actions:
+  install     Download and install the latest ManClaw release (default)
+  uninstall   Uninstall the global ManClaw CLI; add --remove-files to also delete TARGET_DIR/manclaw-release
+
 Default repo: icocoding/manclaw
 EOF
       exit 0
@@ -53,6 +80,78 @@ need_cmd npm
 log() {
   printf '[manclaw-install] %s\n' "$1"
 }
+
+choose_action() {
+  local choice
+
+  if [[ "$ACTION_SPECIFIED" == "1" ]]; then
+    return 0
+  fi
+
+  if [[ ! -t 0 ]]; then
+    ACTION="install"
+    return 0
+  fi
+
+  cat <<'EOF'
+Select action:
+  1) Install ManClaw
+  2) Uninstall ManClaw
+EOF
+
+  while true; do
+    read -r -p "Choose [1/2] (default: 1): " choice
+    case "${choice:-1}" in
+      1)
+        ACTION="install"
+        return 0
+        ;;
+      2)
+        ACTION="uninstall"
+        return 0
+        ;;
+      *)
+        echo "Invalid choice: ${choice}" >&2
+        ;;
+    esac
+  done
+}
+
+uninstall_manclaw() {
+  local release_dir
+  TARGET_DIR_ABS="$(mkdir -p "$TARGET_DIR" && cd "$TARGET_DIR" && pwd -P)"
+  release_dir="${TARGET_DIR_ABS}/manclaw-release"
+
+  log "Uninstalling global ManClaw CLI"
+  npm uninstall -g manclaw-release >/dev/null 2>&1 || true
+
+  if [[ "$REMOVE_FILES" == "1" ]]; then
+    if [[ -d "$release_dir" ]]; then
+      log "Removing extracted release directory: ${release_dir}"
+      rm -rf "${release_dir}"
+    else
+      log "No extracted release directory found at ${release_dir}"
+    fi
+  fi
+
+  cat <<EOF
+
+ManClaw uninstall completed.
+
+Global CLI:
+  removed (if previously installed)
+
+Release files:
+  $(if [[ "$REMOVE_FILES" == "1" ]]; then printf 'requested removal from %s/manclaw-release' "$TARGET_DIR_ABS"; else printf 'kept on disk (pass --remove-files to delete extracted files)'; fi)
+EOF
+}
+
+choose_action
+
+if [[ "$ACTION" == "uninstall" ]]; then
+  uninstall_manclaw
+  exit 0
+fi
 
 detect_repo_slug() {
   if [[ -n "$REPO" ]]; then
@@ -186,6 +285,7 @@ Control with global CLI:
   manclaw status
   manclaw restart
   manclaw stop
+  manclaw info
 
 If you skipped global install:
   cd "${RELEASE_DIR}" && npm install --omit=dev && npm start
@@ -199,6 +299,10 @@ Preview on another port:
 
 Update later:
   curl -fsSL https://github.com/${DEFAULT_REPO}/releases/download/scripts/install-latest-release.sh | bash -s -- --target-dir "${TARGET_DIR_ABS}"
+
+Uninstall later:
+  bash scripts/install-latest-release.sh uninstall --target-dir "${TARGET_DIR_ABS}"
+  bash scripts/install-latest-release.sh uninstall --target-dir "${TARGET_DIR_ABS}" --remove-files
 
 Open:
   http://localhost:18300

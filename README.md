@@ -218,6 +218,25 @@ python3 scripts/install-latest-release.py
 bash scripts/install-latest-release.sh
 ```
 
+不带动作时，shell 脚本会提示你选择“安装”或“卸载”；也可以显式传：
+
+```bash
+bash scripts/install-latest-release.sh install
+bash scripts/install-latest-release.sh uninstall
+```
+
+如果要卸载全局 `manclaw`：
+
+```bash
+bash scripts/install-latest-release.sh uninstall
+```
+
+如果连解压出来的发布目录也一起删除：
+
+```bash
+bash scripts/install-latest-release.sh uninstall --target-dir . --remove-files
+```
+
 执行完成后可直接使用：
 
 ```bash
