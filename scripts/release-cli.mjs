@@ -21,6 +21,7 @@ const outLogFile = path.join(runtimeDir, 'manclaw.out.log')
 const errLogFile = path.join(runtimeDir, 'manclaw.err.log')
 const serverEntry = path.join(releaseRoot, 'server', 'index.js')
 const defaultPort = process.env.PORT ?? '18300'
+const defaultHost = process.env.HOST ?? '127.0.0.1'
 const packageName = 'manclaw'
 const defaultRepo = 'icocoding/manclaw'
 const packageVersion = readPackageVersion()
@@ -77,7 +78,7 @@ function statusMessage() {
     return {
       running: true,
       pid,
-      message: `manclaw is running on port ${defaultPort} (pid ${pid}).`,
+      message: `manclaw is running on ${defaultHost}:${defaultPort} (pid ${pid}).`,
     }
   }
 
@@ -107,6 +108,7 @@ function start() {
     cwd: appHome,
     env: {
       ...process.env,
+      HOST: defaultHost,
       PORT: defaultPort,
     },
     detached: true,
@@ -116,7 +118,7 @@ function start() {
   child.unref()
   writeFileSync(pidFile, `${child.pid}\n`, 'utf8')
 
-  console.log(`manclaw started on port ${defaultPort}.`)
+  console.log(`manclaw started on ${defaultHost}:${defaultPort}.`)
   console.log(`PID: ${child.pid}`)
   console.log(`stdout: ${outLogFile}`)
   console.log(`stderr: ${errLogFile}`)
@@ -169,6 +171,7 @@ function info() {
     appHome,
     runtimeDir,
     pidFile,
+    host: defaultHost,
     port: defaultPort,
     running: current.running,
     pid: current.pid,
@@ -339,6 +342,7 @@ Commands:
 
 Environment:
   MANCLAW_HOME  Override the runtime home directory
+  HOST          Override the bind host (default: 127.0.0.1)
   PORT          Override the default port (18300)
 `)
   return 0

@@ -293,6 +293,21 @@ if [[ "$SKIP_INSTALL" != "1" ]]; then
   log "Installing ManClaw as a global CLI"
   npm install -g "$RELEASE_DIR"
   log "Global CLI installed from ${RELEASE_DIR}"
+  log "Starting ManClaw"
+  if START_OUTPUT="$(node "$RELEASE_DIR/cli.mjs" start 2>&1)"; then
+    printf '%s\n' "$START_OUTPUT"
+  else
+    printf '%s\n' "$START_OUTPUT" >&2
+    cat >&2 <<EOF
+
+ManClaw was installed but failed to start automatically.
+
+Check logs:
+  stdout: ~/.manclaw-home/runtime/manclaw.out.log
+  stderr: ~/.manclaw-home/runtime/manclaw.err.log
+EOF
+    exit 1
+  fi
 else
   log "Skipped global install"
 fi
@@ -305,7 +320,6 @@ Install directory:
   ${RELEASE_DIR}
 
 Control with global CLI:
-  manclaw start
   manclaw status
   manclaw restart
   manclaw stop
@@ -317,12 +331,18 @@ Control with global CLI:
 If you skipped global install:
   cd "${RELEASE_DIR}" && npm install --omit=dev && npm start
 
+If you need to start it manually:
+  manclaw start
+
 Global runtime home:
   ~/.manclaw-home
   override with MANCLAW_HOME=/path/to/home
 
 Preview on another port:
   PORT=18301 manclaw start
+
+Bind on all interfaces:
+  HOST=0.0.0.0 manclaw start
 
 Update later:
   curl -fsSL https://github.com/${DEFAULT_REPO}/releases/download/scripts/install-latest-release.sh | bash -s -- --target-dir "${TARGET_DIR_ABS}"

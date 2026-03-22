@@ -319,9 +319,9 @@ export interface InstalledSkillEntry {
 }
 
 export interface InstalledSkillsDocument {
-  workspaceDir: string
-  installDir: string
-  disabledDir: string
+  workspaceDir?: string
+  installDir?: string
+  disabledDir?: string
   managedSkillsDir?: string
   items: InstalledSkillEntry[]
 }

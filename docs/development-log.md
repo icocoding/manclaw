@@ -4,6 +4,11 @@
 
 ### 已完成
 
+- 继续补强技能页运行时目录的回退策略：如果 `openclaw skills list --json` 没返回 `workspaceDir`，且 `openclaw.json -> agents.defaults.workspace` 也未设置，`/api/skills/installed` 现在会按当前 OpenClaw profile 的 home 规则推导默认 workspace（如 `default -> ~/.openclaw/workspace`、命名 profile -> ~/.openclaw-<profile>/workspace`）；这样技能目录仍然围绕 OpenClaw，而不会继续混入 `MANCLAW_HOME`
+- 调整技能页运行时目录的回退策略：当 `openclaw skills list --json` 未返回 `workspaceDir` 时，`/api/skills/installed` 现在会回退到 `openclaw.json -> agents.defaults.workspace` 对应的默认 workspace，而不是继续显示空值；这样运行时技能仍然围绕 OpenClaw 默认工作区展示，同时避免再回退到 `MANCLAW_HOME`
+- 收紧技能页运行时目录的来源：`/api/skills/installed` 现在只展示 OpenClaw 实际返回的 workspace / managed skills 目录；当 `openclaw skills list --json` 没有返回真实路径或命令执行失败时，不再把 `MANCLAW_HOME` 兜底显示成技能目录，避免把 `manclaw` 自身运行目录误展示成 OpenClaw 的托管路径
+- 补齐发布 CLI 对 `HOST` 环境变量的支持：`manclaw start / status / info` 现在会读取并传递 `HOST`，可直接用 `HOST=0.0.0.0 manclaw start` 让服务监听所有网卡；安装脚本的完成提示也同步补上了对应示例
+- 调整发布安装脚本为默认安装后自动启动：`scripts/install-latest-release.sh` 在完成 release 目录依赖安装与全局 CLI 安装后，会直接执行 `manclaw start`；若启动失败则立即回显启动输出，并明确提示查看 `~/.manclaw-home/runtime/manclaw.out.log` 与 `manclaw.err.log`
 - 修复发布安装后运行时依赖缺失的问题：安装脚本与 `manclaw update` 现在都会先在解压出的 release 目录执行 `npm install --omit=dev`，再进行全局 CLI 安装，避免 `manclaw start` 运行 `server/index.js` 时因为 `@fastify/static` 等运行时依赖未落到 release 目录而直接报 `ERR_MODULE_NOT_FOUND`
 - 调整发布 CLI 的启动输出：`manclaw start` 成功后不再只打印一条 `Logs` 路径，而是与 `manclaw logs` 对齐，直接分别输出 `stdout` 和 `stderr` 日志文件位置，减少安装后排查启动失败时还要再执行一次 `manclaw logs` 的重复操作
 - 改进发布安装脚本缺少依赖时的提示：`scripts/install-latest-release.sh` 现在在缺少 `unzip` 时不再只输出裸的 “Missing required command”，而会直接给出常见系统的安装示例命令，减少首次安装时的卡顿和排查成本

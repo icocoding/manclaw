@@ -2119,14 +2119,12 @@ export class ManClawManager {
   async getInstalledSkills(): Promise<InstalledSkillsDocument> {
     const config = await this.readConfigModel()
     const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
-    const installDir = path.join(workspaceDir, 'skills')
-    const disabledDir = path.join(workspaceDir, '.manclaw-disabled-skills')
     const command = config.service.command.trim() || 'openclaw'
-    const managedEntries = [
-      ...(await this.readSkillEntries(installDir, 'installed')),
-      ...(await this.readSkillEntries(disabledDir, 'disabled')),
-    ]
-    const managedEntriesBySlug = new Map(managedEntries.map((item) => [item.slug, item]))
+    const currentConfig = JSON.parse((await this.getCurrentConfig()).content) as Record<string, unknown>
+    const configuredDefaultWorkspace = this.extractAgentConfigBase(currentConfig).defaults.workspace.trim()
+    const defaultWorkspace = configuredDefaultWorkspace
+      ? this.resolveWorkspacePath(configuredDefaultWorkspace)
+      : buildDefaultProfileWorkspace(config.service.profileMode, config.service.profileName, config.service.id)
 
     try {
       const { stdout, stderr } = await execFileAsync(command, buildOpenClawCliArgs(config.service, ['skills', 'list', '--json']), {
@@ -2155,6 +2153,20 @@ export class ManClawManager {
           }
         }>
       }>(stdout || stderr)
+
+      const runtimeWorkspaceDir =
+        typeof payload.workspaceDir === 'string' && payload.workspaceDir.trim()
+          ? path.resolve(workspaceDir, payload.workspaceDir.trim())
+          : defaultWorkspace
+      const runtimeInstallDir = runtimeWorkspaceDir ? path.join(runtimeWorkspaceDir, 'skills') : undefined
+      const runtimeDisabledDir = runtimeWorkspaceDir ? path.join(runtimeWorkspaceDir, '.manclaw-disabled-skills') : undefined
+      const managedEntries = runtimeWorkspaceDir
+        ? [
+            ...(await this.readSkillEntries(runtimeInstallDir!, 'installed')),
+            ...(await this.readSkillEntries(runtimeDisabledDir!, 'disabled')),
+          ]
+        : []
+      const managedEntriesBySlug = new Map(managedEntries.map((item) => [item.slug, item]))
 
       const runtimeItems = (payload.skills ?? [])
         .filter((skill) => typeof skill.name === 'string' && skill.name.trim() !== '')
@@ -2198,17 +2210,26 @@ export class ManClawManager {
       }))
 
       return {
-        workspaceDir: payload.workspaceDir ?? workspaceDir,
-        installDir,
-        disabledDir,
+        workspaceDir: runtimeWorkspaceDir,
+        installDir: runtimeInstallDir,
+        disabledDir: runtimeDisabledDir,
         managedSkillsDir: payload.managedSkillsDir,
         items: [...runtimeItems, ...localOnlyItems].sort((left, right) => left.slug.localeCompare(right.slug)),
       }
     } catch {
+      const runtimeInstallDir = defaultWorkspace ? path.join(defaultWorkspace, 'skills') : undefined
+      const runtimeDisabledDir = defaultWorkspace ? path.join(defaultWorkspace, '.manclaw-disabled-skills') : undefined
+      const managedEntries = defaultWorkspace
+        ? [
+            ...(await this.readSkillEntries(runtimeInstallDir!, 'installed')),
+            ...(await this.readSkillEntries(runtimeDisabledDir!, 'disabled')),
+          ]
+        : []
       return {
-        workspaceDir,
-        installDir,
-        disabledDir,
+        workspaceDir: defaultWorkspace,
+        installDir: runtimeInstallDir,
+        disabledDir: runtimeDisabledDir,
+        managedSkillsDir: undefined,
         items: managedEntries
           .map((item) => ({
             ...item,
