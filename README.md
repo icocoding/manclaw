@@ -234,7 +234,7 @@ curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/instal
 curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash -s -- uninstall
 ```
 
-如果要卸载全局 `manclaw`：
+如果要卸载全局 `manclaw` 并清理运行目录：
 
 ```bash
 curl -fsSL https://github.com/icocoding/manclaw/releases/download/scripts/install-latest-release.sh | bash -s -- uninstall
@@ -247,6 +247,8 @@ manclaw check-update
 manclaw update
 manclaw uninstall
 ```
+
+`manclaw uninstall` 会停止后台服务、卸载全局 CLI，并删除当前 `MANCLAW_HOME`（默认是 `~/.manclaw-home`）。
 
 如果连解压出来的发布目录也一起删除：
 

@@ -9,6 +9,7 @@ SKIP_INSTALL="0"
 REMOVE_FILES="0"
 USING_DEFAULT_REPO="1"
 ACTION_SPECIFIED="0"
+APP_HOME="${MANCLAW_HOME:-${HOME}/.manclaw-home}"
 
 if [[ $# -gt 0 && "${1:-}" != "" && "${1:0:1}" != "-" ]]; then
   case "$1" in
@@ -53,7 +54,7 @@ interactive shell, the script will prompt you to choose install or uninstall.
 
 Actions:
   install     Download and install the latest ManClaw release (default)
-  uninstall   Uninstall the global ManClaw CLI; add --remove-files to also delete TARGET_DIR/manclaw-release
+  uninstall   Uninstall the global ManClaw CLI and remove MANCLAW_HOME; add --remove-files to also delete TARGET_DIR/manclaw-release
 
 Default repo: icocoding/manclaw
 EOF
@@ -141,11 +142,29 @@ EOF
 
 uninstall_manclaw() {
   local release_dir
+  local runtime_home_result
   TARGET_DIR_ABS="$(mkdir -p "$TARGET_DIR" && cd "$TARGET_DIR" && pwd -P)"
   release_dir="${TARGET_DIR_ABS}/manclaw-release"
+  runtime_home_result="removed from ${APP_HOME}"
 
   log "Uninstalling global ManClaw CLI"
   npm uninstall -g manclaw >/dev/null 2>&1 || true
+
+  case "$APP_HOME" in
+    ""|"/"|"${HOME}")
+      log "Skipping runtime home removal because the path is unsafe: ${APP_HOME:-<empty>}"
+      runtime_home_result="kept on disk (unsafe path: ${APP_HOME:-<empty>})"
+      ;;
+    *)
+      if [[ -d "$APP_HOME" ]]; then
+        log "Removing runtime home: ${APP_HOME}"
+        rm -rf "${APP_HOME}"
+      else
+        log "No runtime home found at ${APP_HOME}"
+        runtime_home_result="not found at ${APP_HOME}"
+      fi
+      ;;
+  esac
 
   if [[ "$REMOVE_FILES" == "1" ]]; then
     if [[ -d "$release_dir" ]]; then
@@ -162,6 +181,9 @@ ManClaw uninstall completed.
 
 Global CLI:
   removed (if previously installed)
+
+Runtime home:
+  ${runtime_home_result}
 
 Release files:
   $(if [[ "$REMOVE_FILES" == "1" ]]; then printf 'requested removal from %s/manclaw-release' "$TARGET_DIR_ABS"; else printf 'kept on disk (pass --remove-files to delete extracted files)'; fi)

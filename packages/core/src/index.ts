@@ -577,13 +577,79 @@ function readAgentToolsProfile(value: unknown): AgentToolsProfile | undefined {
   return profile as AgentToolsProfile
 }
 
-function parseJsonObjectFromMixedOutput<T>(output: string): T {
-  const startIndex = output.indexOf('{')
-  if (startIndex < 0) {
-    throw new Error('Command did not return JSON output.')
+function extractBalancedJsonValue(output: string, startIndex: number): string | null {
+  const opening = output[startIndex]
+  const closing = opening === '{' ? '}' : opening === '[' ? ']' : ''
+
+  if (!closing) {
+    return null
   }
 
-  return JSON.parse(output.slice(startIndex)) as T
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let index = startIndex; index < output.length; index += 1) {
+    const char = output[index]
+
+    if (inString) {
+      if (escaped) {
+        escaped = false
+        continue
+      }
+
+      if (char === '\\') {
+        escaped = true
+        continue
+      }
+
+      if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (char === '"') {
+      inString = true
+      continue
+    }
+
+    if (char === opening) {
+      depth += 1
+      continue
+    }
+
+    if (char === closing) {
+      depth -= 1
+      if (depth === 0) {
+        return output.slice(startIndex, index + 1)
+      }
+    }
+  }
+
+  return null
+}
+
+function parseJsonObjectFromMixedOutput<T>(output: string): T {
+  for (let index = 0; index < output.length; index += 1) {
+    const char = output[index]
+    if (char !== '{' && char !== '[') {
+      continue
+    }
+
+    const candidate = extractBalancedJsonValue(output, index)
+    if (!candidate) {
+      continue
+    }
+
+    try {
+      return JSON.parse(candidate) as T
+    } catch {
+      continue
+    }
+  }
+
+  throw new Error('Command did not return parseable JSON output.')
 }
 
 function buildProfileSuffix(profileMode?: ManClawConfig['service']['profileMode'], profileName?: string, serviceId?: string): string {
@@ -2059,7 +2125,7 @@ export class ManClawManager {
 
   async getRecommendedSkillsCatalog(): Promise<SkillsCatalogDocument> {
     const config = await this.readConfigModel()
-    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const workspaceDir = await this.resolveServiceWorkspaceDir(config.service)
     const installDir = path.join(workspaceDir, 'skills')
     const installedSlugs = await this.readInstalledSkillSlugs(workspaceDir)
 
@@ -2316,7 +2382,7 @@ export class ManClawManager {
     }
 
     const config = await this.readConfigModel()
-    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const workspaceDir = await this.resolveServiceWorkspaceDir(config.service)
     const installPath = path.join(workspaceDir, 'skills', slug)
     if (!force && (await fileExists(installPath))) {
       return {
@@ -2369,7 +2435,7 @@ export class ManClawManager {
     }
 
     const config = await this.readConfigModel()
-    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const workspaceDir = await this.resolveServiceWorkspaceDir(config.service)
     const sourceDir = path.join(workspaceDir, 'skills', slug)
     const disabledDir = path.join(workspaceDir, '.manclaw-disabled-skills')
     const targetDir = path.join(disabledDir, slug)
@@ -2412,7 +2478,7 @@ export class ManClawManager {
     }
 
     const config = await this.readConfigModel()
-    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const workspaceDir = await this.resolveServiceWorkspaceDir(config.service)
     const disabledDir = path.join(workspaceDir, '.manclaw-disabled-skills', slug)
     const installDir = path.join(workspaceDir, 'skills')
     const targetDir = path.join(installDir, slug)
@@ -2437,7 +2503,7 @@ export class ManClawManager {
 
   async deleteSkill(slug: string): Promise<SkillMutationResult> {
     const config = await this.readConfigModel()
-    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const workspaceDir = await this.resolveServiceWorkspaceDir(config.service)
     const variants = await this.findSkillPathVariants(workspaceDir, slug)
 
     if (variants.length === 0) {
@@ -2463,7 +2529,7 @@ export class ManClawManager {
 
   async updateSkill(slug: string): Promise<SkillMutationResult> {
     const config = await this.readConfigModel()
-    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const workspaceDir = await this.resolveServiceWorkspaceDir(config.service)
     const installPath = path.join(workspaceDir, 'skills', slug)
 
     if (!(await fileExists(installPath))) {
@@ -2499,7 +2565,7 @@ export class ManClawManager {
 
   async installRecommendedSkills(slugs: string[]): Promise<SkillInstallResult> {
     const config = await this.readConfigModel()
-    const workspaceDir = path.resolve(this.rootDir, config.service.cwd)
+    const workspaceDir = await this.resolveServiceWorkspaceDir(config.service)
     const installDir = path.join(workspaceDir, 'skills')
     const requested = [...new Set(slugs.map((slug) => slug.trim()).filter(Boolean))]
 
@@ -3007,6 +3073,7 @@ export class ManClawManager {
   private async resolveWorkspaceDirForAgent(agentId: string): Promise<string> {
     const document = await this.getCurrentConfig()
     const config = JSON.parse(document.content) as Record<string, unknown>
+    const managerConfig = await this.readConfigModel()
     const agentConfig = this.extractAgentConfigBase(config)
     const target = agentConfig.items.find((item) => item.id === agentId)
 
@@ -3014,7 +3081,12 @@ export class ManClawManager {
       throw new Error(`Agent ${agentId} was not found.`)
     }
 
-    return this.resolveWorkspacePath(target.workspace?.trim() || agentConfig.defaults.workspace)
+    const configuredDefaultWorkspace = agentConfig.defaults.workspace.trim()
+    const fallbackWorkspace =
+      (await this.readWorkspaceForService(managerConfig.service)) ??
+      buildDefaultProfileWorkspace(managerConfig.service.profileMode, managerConfig.service.profileName, managerConfig.service.id)
+
+    return this.resolveWorkspacePath(target.workspace?.trim() || configuredDefaultWorkspace || fallbackWorkspace)
   }
 
   private async readInstalledSkillSlugs(workspaceDir: string): Promise<Set<string>> {
@@ -3625,7 +3697,20 @@ export class ManClawManager {
       }
     }
 
-    return service.cwd.trim() || undefined
+    const cwd = service.cwd.trim()
+    if (cwd && cwd !== '.') {
+      return cwd
+    }
+
+    return buildDefaultProfileWorkspace(service.profileMode, service.profileName, service.id)
+  }
+
+  private async resolveServiceWorkspaceDir(service: ManClawConfig['service']): Promise<string> {
+    const workspace =
+      (await this.readWorkspaceForService(service)) ??
+      buildDefaultProfileWorkspace(service.profileMode, service.profileName, service.id)
+
+    return this.resolveWorkspacePath(workspace)
   }
 
   private async resolveConfigPathForService(service: ManClawConfig['service']): Promise<string | undefined> {
@@ -3734,9 +3819,15 @@ export class ManClawManager {
 
   private async extractAgentConfig(config: Record<string, unknown>): Promise<AgentConfigDocument> {
     const base = this.extractAgentConfigBase(config)
+    const managerConfig = await this.readConfigModel()
+    const configuredDefaultWorkspace = base.defaults.workspace.trim()
+    const fallbackWorkspace =
+      (await this.readWorkspaceForService(managerConfig.service)) ??
+      buildDefaultProfileWorkspace(managerConfig.service.profileMode, managerConfig.service.profileName, managerConfig.service.id)
+    const resolvedDefaultWorkspace = configuredDefaultWorkspace || fallbackWorkspace
     const items = await Promise.all(
       base.items.map(async (item) => {
-        const resolvedWorkspace = this.resolveWorkspacePath(item.workspace?.trim() || base.defaults.workspace)
+        const resolvedWorkspace = this.resolveWorkspacePath(item.workspace?.trim() || resolvedDefaultWorkspace)
         const skillsDir = path.join(resolvedWorkspace, 'skills')
         const disabledSkillsDir = path.join(resolvedWorkspace, '.manclaw-disabled-skills')
         const sessionStore = await this.getAgentSessionStoreInfo(item.id).catch(() => undefined)

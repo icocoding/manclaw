@@ -72,6 +72,25 @@ function clearPidFile() {
   rmSync(pidFile, { force: true })
 }
 
+function canRemoveAppHome(targetPath) {
+  const resolvedPath = path.resolve(targetPath)
+  const homeDir = path.resolve(os.homedir())
+  const rootDir = path.parse(resolvedPath).root
+
+  return resolvedPath !== rootDir && resolvedPath !== homeDir
+}
+
+function removeAppHome() {
+  if (!canRemoveAppHome(appHome)) {
+    console.log(`Skipped removing runtime home because the path is unsafe: ${appHome}`)
+    return false
+  }
+
+  rmSync(appHome, { recursive: true, force: true })
+  console.log(`Removed runtime home: ${appHome}`)
+  return true
+}
+
 function statusMessage() {
   const pid = readPid()
   if (pid && isProcessRunning(pid)) {
@@ -318,6 +337,7 @@ async function update() {
 
 async function uninstall() {
   stop()
+  removeAppHome()
   await execFileAsync('npm', ['uninstall', '-g', packageName], {
     env: process.env,
   })
@@ -337,7 +357,7 @@ Commands:
   info       Show runtime paths and current status
   check-update  Check whether a newer release is available
   update     Download and install the latest release package
-  uninstall  Stop the server and uninstall the global CLI
+  uninstall  Stop the server, remove the runtime home, and uninstall the global CLI
   help       Show this help message
 
 Environment:

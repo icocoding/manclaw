@@ -4,6 +4,10 @@
 
 ### 已完成
 
+- 收紧 service workspace 的默认推导：`readWorkspaceForService()` 不再把 `service.cwd="."` 直接当成 workspace 并解析到 `~/.manclaw-home`；对于 default profile 这类未显式配置 workspace 的 service，现在线路会回到 OpenClaw 约定的默认 workspace。同时，系统技能的推荐列表、安装、启用、禁用、删除、更新等本地目录操作也都切换到这套 service workspace 解析结果，不再误落到 `manclaw` 自身运行目录
+- 统一 Agent workspace 的回退来源：Agents 页与技能页“技能能力”现在不再把空的 `agents.defaults.workspace` 直接按 `manclaw` 的 `rootDir` 解析成 `~/.manclaw-home`；当 Agent 自身未配置 `workspace` 且 `openclaw.json` 的默认 workspace 为空时，会回退到当前 OpenClaw service 的默认 workspace（例如 default profile -> `~/.openclaw/workspace`），从而与“运行时技能”区块保持一致
+- 加强混合输出里的 JSON 提取：`packages/core` 不再从第一个 `{` 起把整段输出直接 `JSON.parse` 到结尾，而是会扫描并提取首个完整、配对闭合的 JSON 值后再解析；这样 `openclaw plugins list --json`、`skills list --json` 等命令即使在 JSON 前后夹带额外日志，也不会再因为尾部多一段非 JSON 文本而直接报 `Unexpected non-whitespace character after JSON`
+- 调整卸载语义与清理范围：`manclaw uninstall` 现在会在停止后台服务并卸载全局 CLI 之前，直接删除当前 `MANCLAW_HOME`（默认 `~/.manclaw-home`）；shell 安装脚本的 `uninstall` 也会同步清理该运行目录，而 `--remove-files` 只再额外删除目标目录下解压出的 `manclaw-release/`，避免卸载后继续残留旧 runtime 状态
 - 补强 `/api/openclaw/plugins` 的错误可见性：插件列表接口现在单独包了一层 `try/catch`，当 `openclaw plugins list --json` 失败时，会以 `openclaw plugins list failed` 记录一条明确的错误日志，并向前端返回 `OPENCLAW_PLUGINS_LIST_FAILED` 和具体错误消息，不再只剩一条笼统的 500 请求完成日志
 - 修复发布 CLI 可执行权限丢失的问题：将 `scripts/release-cli.mjs` 恢复为可执行文件，并在 `scripts/prepare-release.mjs` 中显式对 release 产物里的 `cli.mjs` 执行 `chmod 755`；避免全局安装后 `/usr/bin/manclaw` 因目标文件不可执行而直接报 `Permission denied`
 - 继续补强技能页运行时目录的回退策略：如果 `openclaw skills list --json` 没返回 `workspaceDir`，且 `openclaw.json -> agents.defaults.workspace` 也未设置，`/api/skills/installed` 现在会按当前 OpenClaw profile 的 home 规则推导默认 workspace（如 `default -> ~/.openclaw/workspace`、命名 profile -> ~/.openclaw-<profile>/workspace`）；这样技能目录仍然围绕 OpenClaw，而不会继续混入 `MANCLAW_HOME`
