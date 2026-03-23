@@ -43,6 +43,15 @@
               </button>
             </div>
           </section>
+
+          <section class="shell__entry">
+            <p class="panel__label">版本信息</p>
+            <p class="shell__entry-version">Version {{ appVersion }}</p>
+            <div class="shell__entry-links">
+              <a href="https://cocoding.org/manclaw" target="_blank" rel="noreferrer">官网入口</a>
+              <a href="https://github.com/icocoding/manclaw.git" target="_blank" rel="noreferrer">Git 入口</a>
+            </div>
+          </section>
         </div>
       </aside>
 
@@ -70,6 +79,7 @@ const themes: Array<{ id: ThemeId; label: string }> = [
 ]
 
 const currentTheme = ref<ThemeId>('forge')
+const appVersion = __APP_VERSION__
 const naiveThemeOverrides = computed(() => {
   if (currentTheme.value === 'harbor') {
     return {

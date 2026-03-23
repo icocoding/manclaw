@@ -278,6 +278,58 @@ a {
   max-width: 20ch;
 }
 
+.shell__entry {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.018));
+}
+
+.shell__entry-version {
+  margin: -2px 0 0;
+  color: var(--text-1);
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+}
+
+.shell__entry-links {
+  display: grid;
+  gap: 10px;
+}
+
+.shell__entry-links a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--text-1);
+  background: linear-gradient(180deg, rgba(255, 248, 238, 0.045), rgba(255, 248, 238, 0.02));
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.shell__entry-links a::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.shell__entry-links a:hover {
+  transform: translateX(4px);
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, rgba(221, 176, 107, 0.12), rgba(255, 248, 238, 0.04));
+}
+
 .shell__nav {
   display: grid;
   gap: 10px;
