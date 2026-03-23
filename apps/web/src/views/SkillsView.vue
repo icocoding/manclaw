@@ -60,6 +60,15 @@
             />
           </label>
 
+          <label v-if="selectedAgent" class="field skills-agent-field">
+            <span class="field__label">工作区技能筛选</span>
+            <n-input
+              v-model:value="workspaceSkillFilter"
+              class="field-control"
+              placeholder="按技能名过滤，例如 summarize / feishu"
+            />
+          </label>
+
           <div v-if="busy.refresh && !selectedAgent && availableAgents.length === 0" class="skills-loading">
             <p class="panel__muted">正在读取 Agent 列表与工作区技能，请稍候...</p>
           </div>
@@ -161,7 +170,7 @@
             </p>
           </template>
           <p v-else class="panel__muted">
-            {{ selectedAgent ? '该 Agent workspace 里当前还没有本地技能。' : '请先选择一个 Agent。' }}
+            {{ selectedAgent ? (selectedAgent.workspaceSkills?.length ? '当前筛选条件下没有匹配的本地技能。' : '该 Agent workspace 里当前还没有本地技能。') : '请先选择一个 Agent。' }}
           </p>
         </n-tab-pane>
 
@@ -302,6 +311,7 @@ const skillSlug = ref('')
 const skillDetail = ref<RegistrySkillDetail>()
 const forceInstall = ref(false)
 const activeTab = ref<'workspace' | 'runtime'>('workspace')
+const workspaceSkillFilter = ref('')
 const runtimeSkillFilter = ref('')
 const allowBundledDraft = ref<string[]>([])
 const inspectMessage = ref('选择 Agent 后，可先查询 skill 说明，再决定是否安装。')
@@ -327,7 +337,16 @@ const agentOptions = computed(() =>
   })),
 )
 const canInstallToAgent = computed(() => Boolean(selectedInstallAgentId.value.trim() && skillSlug.value.trim()))
-const workspaceTabSkills = computed(() => selectedAgent.value?.workspaceSkills ?? [])
+const workspaceTabSkills = computed(() => {
+  const filter = workspaceSkillFilter.value.trim().toLowerCase()
+  const skills = selectedAgent.value?.workspaceSkills ?? []
+
+  if (!filter) {
+    return skills
+  }
+
+  return skills.filter((item) => item.slug.toLowerCase().includes(filter))
+})
 const allowBundledOptions = computed(() =>
   installedSkills.value.items
     .filter((item) => item.bundled)
@@ -412,6 +431,7 @@ async function refreshAgents(): Promise<void> {
   if (!selectedInstallAgentId.value || !document.items.some((item) => item.id === selectedInstallAgentId.value)) {
     selectedInstallAgentId.value = document.defaultAgentId || document.items[0]?.id || ''
   }
+  workspaceSkillFilter.value = ''
 }
 
 async function refreshSkillsConfig(): Promise<void> {

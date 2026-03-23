@@ -4,6 +4,24 @@
 
 ### 已完成
 
+- 修复“最佳实践 -> 一键更换 Model ID”表单状态未回刷的问题：迁移成功后，旧模型下拉现在会同步切到新的目标值，避免数据已经更新但表单仍停留在旧 ID，造成看起来“没有刷新”的错觉
+- 修正“最佳实践 -> 一键更换 Model ID”的保存顺序：原实现先改模型列表，再改默认模型和 Agent 引用，会被后端的“模型仍被其它配置引用”保护拦下，导致 `/api/model-setup/apply` 直接返回 400。现已改成先保存 Agent 默认模型和显式绑定，再改模型列表，避免旧 ID 还在被引用时提前触发删除保护
+- 继续收紧“最佳实践 -> 一键更换 Model ID”的语义：不再要求用户先准备两个现成的 model ID 再做引用切换，而是支持直接把旧 ID 迁移成新的版本号，例如 `qwen3.5-plus -> qwen3.5-plus-2026.2.26`。执行时会同时改写模型列表中的旧 ID、默认模型引用，以及所有显式绑定到旧值的 Agent `modelPrimary`
+- 最佳实践页新增“一键更换 Model ID”：可直接选择旧模型和新模型，批量替换 `agents.defaults.model.primary` 以及所有显式绑定到旧值的 Agent `modelPrimary`。这块只改绑定引用，不会新增模型记录，适合在模型页先补好新 model ID 后，再集中完成默认模型和 Agent 引用迁移
+- 回滚模型页对 `models[].model` 的写入：验证发现当前 OpenClaw 配置 schema 会直接拒绝 `models.providers.*.models[].model`，并报 `Unrecognized key: "model"`，因此 `manclaw` 已停止向 `openclaw.json` 写该字段。模型页说明也同步改回真实口径，明确当前仅支持维护模型 ID；如果上游模型版本名发生变化，仍需新增新的模型 ID 并重新切换默认模型或 Agent 绑定，不能伪装成已支持单独的 API model 映射
+- 修复 Agent 页默认模型下拉里的 `undefined` 选项：`Models` 页面拆出“模型 ID / 实际 Model”后，`Agents` 页和首页摘要仍在用旧的 `entry.model` 生成绑定选项，导致下拉里出现 `provider/undefined`。现已统一改回使用稳定的 `entry.modelId` 作为默认模型绑定值，确保 Agent 绑定关系与 OpenClaw 实际引用键一致
+- 调整模型页的新增按钮与提示文案：在模型列表里，原“新增模型 ID”按钮已改为“新增模型条目”，顶部说明与状态提示也同步强调当前维护的是“稳定模型 ID + 实际 Model”这一对字段，避免在已经拆出 `Model` 后，界面文案仍误导成只新增一个 ID
+- 调整模型页为“模型 ID / 实际 Model”双字段：`模型 ID` 继续作为 OpenClaw 绑定键和默认模型引用，新增可选 `Model` 字段用于真正请求上游 API；当供应商模型版本名变化时，可仅更新 `Model` 而保持 Agent 绑定不变。`packages/core` 的模型配置读写也同步改为将 `models.providers.*.models[]` 写成 `{ id, name, model }` 结构，并在未填写 `Model` 时自动回退为与 `ID` 相同
+- 继续扩充“清理 Session”的判断清单：在最佳实践页里补充了更具体的推荐时机和典型信号，例如刚禁用 tools、切换默认模型、替换 workspace、重装技能、修改绑定后，或已经收紧权限但回复行为仍沿用旧上下文时，应优先清理 Session 再继续验证
+- 调整最佳实践卡片顺序：`Session Cleanup` 已上移到说明卡之后，作为页面第二块内容，优先强调“改完配置先清 Session”这类高频操作；飞书收敛、渠道新增和预设 Agent 则后移到其后
+- 继续优化最佳实践页说明卡的可读性：将 `当前策略边界` 的正文拆成 `插件边界 / Session 时机 / 判断原则` 三个信息块，并单独拉高导语字号，避免顶部说明继续挤成连续段落、读者需要自己在长句里拆重点
+- 调整最佳实践页说明卡位置与交互：`当前策略边界` 说明已前置到页面最上方，作为进入最佳实践前的总说明；同时为说明卡补充鼠标悬停时的边框高亮、轻微上浮和阴影变化，让这块提示不再淹没在普通卡片流里
+- 提升“清理 Session”说明的醒目程度：最佳实践页的 `Session Cleanup` 区块新增高可见度提醒卡，明确标出推荐清理时机，以及“会删除该 Agent 的 session store 和 transcript 文件、下一轮将从干净上下文重新开始”的影响，避免提示继续淹没在普通说明文案里
+- 收紧服务重启前的进程退出等待：`terminatePid()` 现在在发送 `SIGTERM` 后会持续等待 PID 消失，必要时发送 `SIGKILL` 后也会继续等待实际退出，再返回给 `restart` 流程；避免旧 OpenClaw 进程尚未完全退出、端口还没释放时就立刻重新拉起，导致页面上看起来“重启后没在运行，还要再点一次启动”
+- 补齐模型页对明文 `apiKey` 的反读：`extractQuickModelConfig()` 现在不再只识别 `${ENV_VAR}` 形式的 provider API key；对于直接写在 `models.providers.<id>.apiKey` 里的明文 key，也会回填到模型页，并按 provider ID 自动派生一个稳定的环境变量名，便于后续再次保存时平滑迁移到环境变量占位写法
+- 强化模型页的错误提示：`Models` 页面在保存前会先校验默认模型、模型 ID、`custom-openai` 的 provider ID / Base URL / API Key / 环境变量名，并在缺失时直接显示更醒目的红色错误消息、自动展开并滚动到对应条目；后端返回的保存失败消息也会统一加上“模型配置保存失败”前缀，避免用户只看到不够显眼的裸错误文本
+- 为插件列表补充关键字筛选：插件页现在支持将“状态筛选”和关键字筛选叠加使用，可按名称、ID、来源、工具名、渠道、provider、命令等字段过滤；顶部“已加载”计数也会随当前筛选结果同步收敛
+- 为技能管理页补充列表筛选：工作区技能现在支持按 slug 即时过滤，系统技能继续支持按技能名或来源过滤；空结果文案和计数也会跟随筛选结果更新，减少技能条目增多后只能整页扫读的负担
 - 放宽 Agent 默认 workspace 的保存约束：`Agent 管理` 现在允许将 `defaults.workspace` 留空保存，不再直接报 `Default workspace is required.`；当需要为新 Agent 初始化或补建 workspace 时，会自动回退到当前 OpenClaw service 的默认 workspace，而不是强制用户先手填一个默认目录
 - 扩展“最佳实践 -> 一键禁用所有飞书 Tools”的动作范围：该按钮现在除了写入当前 profile 的 `channels.feishu.tools` 外，还会同步扫描当前系统技能列表中的 `feishu-*` 条目，并通过现有禁用接口逐个写入 `openclaw.json -> skills.entries.<slug>.enabled=false`；这样可以同时收紧飞书渠道工具暴露和对应系统技能开关
 - 收紧 service workspace 的默认推导：`readWorkspaceForService()` 不再把 `service.cwd="."` 直接当成 workspace 并解析到 `~/.manclaw-home`；对于 default profile 这类未显式配置 workspace 的 service，现在线路会回到 OpenClaw 约定的默认 workspace。同时，系统技能的推荐列表、安装、启用、禁用、删除、更新等本地目录操作也都切换到这套 service workspace 解析结果，不再误落到 `manclaw` 自身运行目录
@@ -384,3 +402,5 @@
 - roadmap 第 1 项已从“仅记录方案”进入实际实现阶段
 - 当前已完成“多个模型条目 + 默认模型”这一步，尚未扩展到主模型 / 备用模型 / 其他用途分组
 - 保留服务探测增强方案：在原有 `managed + process-scan` 之外，补充 `systemd` / `launchctl` 探测，并将 `detectedBy` / `managerName` 回传到服务状态接口
+- 调整最佳实践页网格对齐方式，让 `Session Cleanup` 在加载 Agent 列表后保持按内容高度贴顶，不再把同一行卡片整体撑高；列表仍保留内部滚动。
+- 将最佳实践页从按行对齐的双列 grid 改成左右两列独立堆叠，避免右侧 `Session Cleanup` 变高后在左侧说明卡下方留下整块空白；各列卡片现在会在本列内自然贴顶排列。

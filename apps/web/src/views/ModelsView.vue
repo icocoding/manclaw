@@ -19,7 +19,7 @@
             <p class="panel__label">模型列表</p>
             <h3>管理模型 ID 与默认模型</h3>
           </div>
-          <p class="panel__muted">在列表里直接维护模型条目、模型 ID 和默认模型；附加配置按需展开。</p>
+          <p class="panel__muted">当前 OpenClaw 配置 schema 只支持模型 ID，不支持额外的 `model` 映射字段。若上游版本号变化，仍需新增新的模型 ID，并重新调整默认模型或 Agent 绑定。</p>
         </div>
 
         <div class="button-row button-row--between">
@@ -38,7 +38,7 @@
         <div v-if="providerGroups.length > 0" class="model-list">
           <div class="model-list__head">
             <span>提供商</span>
-            <span>模型 IDs</span>
+            <span>模型 ID</span>
             <span>附加配置</span>
             <span>操作</span>
           </div>
@@ -59,16 +59,16 @@
               />
 
               <div class="model-id-list">
-                <div v-for="(modelId, modelIndex) in group.modelIds" :key="`${group.id}-${modelIndex}`" class="model-id-row">
+                <div v-for="(modelEntry, modelIndex) in group.models" :key="modelEntry.id" class="model-id-row">
                   <n-input
-                    :value="modelId"
+                    :value="modelEntry.modelId"
                     class="field-control"
-                    placeholder="例如 gpt-5.2 / claude-opus-4-5 / llama3.3"
+                    placeholder="模型 ID，例如 qwen3.5-plus"
                     @update:value="(value) => updateGroupModelId(group.id, modelIndex, value)"
                   />
-                  <n-button tertiary :disabled="busy.quickModel || group.modelIds.length === 1" @click="removeGroupModelId(group.id, modelIndex)">删除</n-button>
+                  <n-button tertiary :disabled="busy.quickModel || group.models.length === 1" @click="removeGroupModelId(group.id, modelIndex)">删除</n-button>
                 </div>
-                <n-button tertiary class="model-id-list__add" @click="addGroupModelId(group.id)">新增模型 ID</n-button>
+                <n-button tertiary class="model-id-list__add" @click="addGroupModelId(group.id)">新增模型条目</n-button>
               </div>
 
               <div class="model-row__meta">
@@ -112,7 +112,7 @@
 
         <div class="button-row model-list__footer">
           <n-button tertiary :disabled="busy.quickModel" @click="addProviderGroup">新增记录</n-button>
-          <p class="panel__muted">新记录会追加到列表末尾，并自动定位过去。</p>
+          <p class="panel__muted">这里维护的是 OpenClaw 认可的模型 ID。若供应商版本名发生变化，需要新增新的模型 ID，并把默认模型或 Agent 绑定切到新 ID。</p>
         </div>
 
         <div class="button-row model-actions">
@@ -120,7 +120,7 @@
           <n-button tertiary :disabled="busy.refresh" @click="refreshAll">重置表单</n-button>
         </div>
 
-        <p class="status-text">{{ quickModelMessage }}</p>
+        <p class="status-text" :class="{ 'status-text--error': quickModelMessageIsError }">{{ quickModelMessage }}</p>
       </article>
 
       <article class="panel">
@@ -186,7 +186,10 @@ import type {
 interface ModelProviderGroup {
   id: string
   provider: QuickModelProvider
-  modelIds: string[]
+  models: Array<{
+    id: string
+    modelId: string
+  }>
   apiKey: string
   baseUrl: string
   customProviderId: string
@@ -194,7 +197,8 @@ interface ModelProviderGroup {
 }
 
 const quickModelProviders = ref<QuickModelConfigDocument['availableProviders']>([])
-const quickModelMessage = ref('可在列表中直接维护多个模型 ID，并设置默认模型。')
+const quickModelMessage = ref('可在列表中直接维护 OpenClaw 支持的模型 ID，并指定默认模型。')
+const quickModelMessageIsError = computed(() => /失败|错误|required|invalid|unsupported|must|缺少|不能为空|未填写/i.test(quickModelMessage.value))
 const configContent = ref('')
 const busy = reactive({
   refresh: false,
@@ -212,9 +216,12 @@ const quickProviderOptions = computed(() => quickModelProviders.value.map((provi
 })))
 const defaultModelOptions = computed(() =>
   providerGroups.value.flatMap((group) =>
-    group.modelIds.map((modelId) => ({
-      label: `${providerDisplayName(group)}/${modelId}`,
-      value: createDefaultModelKey(group.id, modelId),
+    group.models
+      .map((entry) => entry.modelId.trim())
+      .filter(Boolean)
+      .map((modelId) => ({
+        label: `${providerDisplayName(group)}/${modelId}`,
+        value: createDefaultModelKey(group.id, modelId),
     })),
   ),
 )
@@ -231,7 +238,7 @@ const defaultModelEntry = computed(() => {
 
   return {
     provider: group.provider,
-    model: parsed.modelId,
+    modelId: parsed.modelId,
     baseUrl: group.baseUrl,
     customProviderId: group.customProviderId,
     envVarName: group.envVarName,
@@ -239,18 +246,27 @@ const defaultModelEntry = computed(() => {
 })
 const quickModelSummaryTitle = computed(() => {
   const entry = defaultModelEntry.value
-  return entry ? `${entry.provider === 'custom-openai' ? entry.customProviderId || 'custom-openai' : entry.provider}/${entry.model}` : '--'
+  return entry ? `${entry.provider === 'custom-openai' ? entry.customProviderId || 'custom-openai' : entry.provider}/${entry.modelId}` : '--'
 })
-const totalModelCount = computed(() => providerGroups.value.reduce((sum, group) => sum + group.modelIds.length, 0))
+const totalModelCount = computed(() => providerGroups.value.reduce((sum, group) => sum + group.models.length, 0))
 
 let localGroupSeed = 0
+let localModelSeed = 0
+
+function createGroupModelEntry(): { id: string; modelId: string } {
+  localModelSeed += 1
+  return {
+    id: `provider-model-${localModelSeed}`,
+    modelId: '',
+  }
+}
 
 function createProviderGroup(provider: QuickModelProvider = 'openai'): ModelProviderGroup {
   localGroupSeed += 1
   return {
     id: `provider-group-${localGroupSeed}`,
     provider,
-    modelIds: [''],
+    models: [createGroupModelEntry()],
     apiKey: '',
     baseUrl: '',
     customProviderId: '',
@@ -286,7 +302,7 @@ function parseDefaultModelKey(value: string): { groupId: string; modelId: string
 }
 
 function groupSummary(group: ModelProviderGroup): string {
-  const count = group.modelIds.length
+  const count = group.models.length
   return `${providerDisplayName(group)} · ${count} 个模型 ID`
 }
 
@@ -355,7 +371,7 @@ function addGroupModelId(groupId: string): void {
     return
   }
 
-  group.modelIds = [...group.modelIds, '']
+  group.models = [...group.models, createGroupModelEntry()]
 }
 
 function updateGroupModelId(groupId: string, modelIndex: number, value: string): void {
@@ -364,9 +380,12 @@ function updateGroupModelId(groupId: string, modelIndex: number, value: string):
     return
   }
 
-  const nextModelIds = [...group.modelIds]
-  nextModelIds[modelIndex] = value
-  group.modelIds = nextModelIds
+  const nextModels = [...group.models]
+  nextModels[modelIndex] = {
+    ...nextModels[modelIndex],
+    modelId: value,
+  }
+  group.models = nextModels
   normalizeDefaultModelSelection()
 }
 
@@ -376,7 +395,7 @@ function removeGroupModelId(groupId: string, modelIndex: number): void {
     return
   }
 
-  group.modelIds = group.modelIds.filter((_, index) => index !== modelIndex)
+  group.models = group.models.filter((_, index) => index !== modelIndex)
   normalizeDefaultModelSelection()
 }
 
@@ -384,13 +403,76 @@ function normalizeDefaultModelSelection(): void {
   const parsed = parseDefaultModelKey(defaultModelKey.value)
   if (parsed) {
     const group = providerGroups.value.find((item) => item.id === parsed.groupId)
-    if (group && group.modelIds.includes(parsed.modelId)) {
+    if (group && group.models.some((item) => item.modelId.trim() === parsed.modelId)) {
       return
     }
   }
 
-  const fallbackGroup = providerGroups.value.find((group) => group.modelIds.length > 0)
-  defaultModelKey.value = fallbackGroup ? createDefaultModelKey(fallbackGroup.id, fallbackGroup.modelIds[0]) : ''
+  const fallbackGroup = providerGroups.value.find((group) => group.models.some((item) => item.modelId.trim()))
+  const fallbackModelId = fallbackGroup?.models.find((item) => item.modelId.trim())?.modelId.trim()
+  defaultModelKey.value = fallbackGroup && fallbackModelId ? createDefaultModelKey(fallbackGroup.id, fallbackModelId) : ''
+}
+
+async function focusGroup(groupId: string): Promise<void> {
+  expandedGroupIds.value = Array.from(new Set([...expandedGroupIds.value, groupId]))
+  await nextTick()
+  const row = document.querySelector<HTMLElement>(`[data-group-id="${groupId}"]`)
+  row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  row?.querySelector<HTMLInputElement>('input')?.focus()
+}
+
+async function validateQuickModelSetup(): Promise<boolean> {
+  normalizeDefaultModelSelection()
+
+  const selectedDefault = parseDefaultModelKey(defaultModelKey.value)
+  if (!selectedDefault) {
+    quickModelMessage.value = '请选择默认模型。'
+    return false
+  }
+
+  for (const [index, group] of providerGroups.value.entries()) {
+    const entryLabel = `${providerDisplayName(group)}（第 ${index + 1} 条）`
+    const hasModel = group.models.some((entry) => entry.modelId.trim())
+
+    if (!hasModel) {
+      quickModelMessage.value = `${entryLabel} 至少需要填写一个模型 ID。`
+      await focusGroup(group.id)
+      return false
+    }
+
+    const missingModelIdIndex = group.models.findIndex((entry) => !entry.modelId.trim())
+    if (missingModelIdIndex >= 0) {
+      quickModelMessage.value = `${entryLabel} 第 ${missingModelIdIndex + 1} 行缺少模型 ID。`
+      await focusGroup(group.id)
+      return false
+    }
+
+    if (providerMeta(group.provider)?.supportsCustomProviderId && !group.customProviderId.trim()) {
+      quickModelMessage.value = `${entryLabel} 缺少自定义提供商 ID。`
+      await focusGroup(group.id)
+      return false
+    }
+
+    if (providerMeta(group.provider)?.supportsBaseUrl && !group.baseUrl.trim()) {
+      quickModelMessage.value = `${entryLabel} 缺少 Base URL。`
+      await focusGroup(group.id)
+      return false
+    }
+
+    if (providerMeta(group.provider)?.requiresApiKey && !group.apiKey.trim()) {
+      quickModelMessage.value = `${entryLabel} 缺少 API Key。`
+      await focusGroup(group.id)
+      return false
+    }
+
+    if (providerMeta(group.provider)?.supportsCustomProviderId && !group.envVarName.trim()) {
+      quickModelMessage.value = `${entryLabel} 缺少环境变量名。`
+      await focusGroup(group.id)
+      return false
+    }
+  }
+
+  return true
 }
 
 function applyQuickModelSettings(document: QuickModelConfigDocument): void {
@@ -410,15 +492,19 @@ function applyQuickModelSettings(document: QuickModelConfigDocument): void {
       group.baseUrl = baseUrl
       group.envVarName = envVarName
       group.apiKey = apiKey
+      group.models = []
       grouped.set(groupKey, group)
     }
 
-    grouped.get(groupKey)?.modelIds.push(entry.model)
+    grouped.get(groupKey)?.models.push({
+      id: createGroupModelEntry().id,
+      modelId: entry.modelId,
+    })
   })
 
   providerGroups.value = Array.from(grouped.values()).map((group) => ({
     ...group,
-    modelIds: Array.from(new Set(group.modelIds.filter(Boolean))),
+    models: group.models.filter((entry) => entry.modelId.trim()),
   }))
 
   if (providerGroups.value.length === 0) {
@@ -437,9 +523,9 @@ function applyQuickModelSettings(document: QuickModelConfigDocument): void {
       group.baseUrl === (defaultEntry.baseUrl ?? '') &&
       group.envVarName === (defaultEntry.envVarName ?? '') &&
       group.apiKey === (defaultEntry.apiKey ?? '') &&
-      group.modelIds.includes(defaultEntry.model),
+      group.models.some((entry) => entry.modelId === defaultEntry.modelId),
     )
-    defaultModelKey.value = matchedGroup ? createDefaultModelKey(matchedGroup.id, defaultEntry.model) : ''
+    defaultModelKey.value = matchedGroup ? createDefaultModelKey(matchedGroup.id, defaultEntry.modelId) : ''
   } else {
     defaultModelKey.value = ''
   }
@@ -470,22 +556,29 @@ async function refreshAll(): Promise<void> {
 async function applyQuickModelSetup(): Promise<void> {
   busy.quickModel = true
   try {
-    normalizeDefaultModelSelection()
+    if (!(await validateQuickModelSetup())) {
+      return
+    }
+
     const selectedDefault = parseDefaultModelKey(defaultModelKey.value)
     let resolvedDefaultModelId = ''
     const entries = providerGroups.value.flatMap((group) =>
-      Array.from(new Set(group.modelIds.map((modelId) => modelId.trim()).filter(Boolean)))
-        .filter(Boolean)
-        .map((modelId) => {
-          const entryId = `${group.id}:::${modelId}`
-          if (selectedDefault && selectedDefault.groupId === group.id && selectedDefault.modelId === modelId) {
+      group.models
+        .map((entry) => ({
+          modelId: entry.modelId.trim(),
+        }))
+        .filter((entry) => entry.modelId)
+        .filter((entry, index, list) => list.findIndex((candidate) => candidate.modelId === entry.modelId) === index)
+        .map((entry) => {
+          const entryId = `${group.id}:::${entry.modelId}`
+          if (selectedDefault && selectedDefault.groupId === group.id && selectedDefault.modelId === entry.modelId) {
             resolvedDefaultModelId = entryId
           }
 
           return {
             id: entryId,
             provider: group.provider,
-            model: modelId,
+            modelId: entry.modelId,
             apiKey: group.apiKey.trim() || undefined,
             baseUrl: group.baseUrl.trim() || undefined,
             customProviderId: group.customProviderId.trim() || undefined,
@@ -506,7 +599,7 @@ async function applyQuickModelSetup(): Promise<void> {
     quickModelMessage.value = '模型配置已写入 openclaw.json。'
     await refreshAll()
   } catch (error) {
-    quickModelMessage.value = error instanceof Error ? error.message : '模型配置失败。'
+    quickModelMessage.value = error instanceof Error ? `模型配置保存失败：${error.message}` : '模型配置保存失败。'
   } finally {
     busy.quickModel = false
   }
@@ -618,6 +711,7 @@ onUnmounted(() => {
   align-items: center;
 }
 
+
 .model-id-list__add {
   justify-self: flex-start;
 }
@@ -650,6 +744,10 @@ onUnmounted(() => {
 
   .model-row__actions {
     justify-content: space-between;
+  }
+
+  .model-id-row__fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

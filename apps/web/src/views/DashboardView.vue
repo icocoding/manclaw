@@ -305,7 +305,7 @@ const quickModelSummaryTitle = computed(() => {
   }
 
   const providerName = entry.provider === 'custom-openai' ? entry.customProviderId || 'custom-openai' : entry.provider
-  return `${providerName}/${entry.model || '--'}`
+  return `${providerName}/${entry.modelId || '--'}`
 })
 const allowedCommandOptions = computed(() => allowedCommands.value.map((command) => ({
   label: `${command.title} (${command.riskLevel})`,

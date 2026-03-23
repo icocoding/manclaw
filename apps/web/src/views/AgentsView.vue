@@ -567,7 +567,7 @@ async function refreshAll(): Promise<void> {
     modelOptions.value = quickModelDocument.entries
       .map((entry) => {
         const providerKey = entry.provider === 'custom-openai' ? entry.customProviderId || 'custom-openai' : entry.provider
-        const value = `${providerKey}/${entry.model}`
+        const value = `${providerKey}/${entry.modelId}`
         return {
           label: value,
           value,

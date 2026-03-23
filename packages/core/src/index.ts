@@ -427,6 +427,16 @@ function defaultEnvVarForProvider(provider: QuickModelProvider): string | undefi
   }
 }
 
+function deriveCustomProviderEnvVarName(providerId: string): string {
+  const normalized = providerId
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase()
+
+  return `${normalized || 'CUSTOM_OPENAI'}_API_KEY`
+}
+
 function isKnownQuickModelProvider(providerId: string): providerId is Exclude<QuickModelProvider, 'custom-openai'> {
   return providerId === 'openai' || providerId === 'anthropic' || providerId === 'google' || providerId === 'openrouter' || providerId === 'ollama'
 }
@@ -1898,7 +1908,7 @@ export class ManClawManager {
     this.assertRemovedModelsAreNotReferencedElsewhere(config, candidate)
     const nextConfig = this.applyQuickModelConfig(config, candidate)
     const defaultEntry = candidate.entries.find((entry) => entry.id === candidate.defaultModelId)
-    const commentTarget = defaultEntry ? `${defaultEntry.provider}/${defaultEntry.model.trim()}` : candidate.defaultModelId
+    const commentTarget = defaultEntry ? `${defaultEntry.provider}/${defaultEntry.modelId.trim()}` : candidate.defaultModelId
     return this.saveConfig(`${JSON.stringify(nextConfig, null, 2)}\n`, `Quick model setup: ${commentTarget}`)
   }
 
@@ -3744,13 +3754,15 @@ export class ManClawManager {
     const pushEntry = (
       providerId: string,
       providerConfig: Record<string, unknown>,
-      model: string,
+      modelId: string,
+      configuredName: string | undefined,
       index: number,
     ): void => {
-      const trimmedModel = model.trim()
-      if (!trimmedModel) {
+      const trimmedModelId = modelId.trim()
+      if (!trimmedModelId) {
         return
       }
+      const trimmedConfiguredName = configuredName?.trim()
 
       const providerType: QuickModelProvider = isKnownQuickModelProvider(providerId) ? providerId : 'custom-openai'
       const apiKeyPlaceholder = readString(providerConfig.apiKey)
@@ -3758,15 +3770,26 @@ export class ManClawManager {
         providerType === 'custom-openai'
           ? apiKeyPlaceholder?.match(/^\$\{(.+)\}$/)?.[1]
           : defaultEnvVarForProvider(providerType)
+      const directApiKey =
+        providerType === 'custom-openai' && apiKeyPlaceholder && !resolvedEnvVarName
+          ? apiKeyPlaceholder
+          : undefined
       const entry: QuickModelEntry = {
-        id: createModelEntryId(providerId, trimmedModel, entries.length + index),
+        id: createModelEntryId(providerId, trimmedModelId, entries.length + index),
         provider: providerType,
-        model: trimmedModel,
+        modelId: trimmedModelId,
+      }
+      if (trimmedConfiguredName && trimmedConfiguredName !== trimmedModelId) {
+        entry.name = trimmedConfiguredName
       }
 
       if (providerType === 'custom-openai') {
         entry.customProviderId = providerId
         entry.baseUrl = readString(providerConfig.baseUrl)
+        if (directApiKey) {
+          entry.envVarName = deriveCustomProviderEnvVarName(providerId)
+          entry.apiKey = directApiKey
+        }
       }
       if (resolvedEnvVarName) {
         entry.envVarName = resolvedEnvVarName
@@ -3774,7 +3797,7 @@ export class ManClawManager {
       }
 
       entries.push(entry)
-      if (providerId === defaultProviderId && trimmedModel === defaultModel && !defaultModelId) {
+      if (providerId === defaultProviderId && trimmedModelId === defaultModel && !defaultModelId) {
         defaultModelId = entry.id
       }
     }
@@ -3786,27 +3809,33 @@ export class ManClawManager {
       if (providerModels.length > 0) {
         providerModels.forEach((item, index) => {
           const modelRecord = asRecord(item)
-          const model = readString(modelRecord.id) ?? readString(modelRecord.name)
-          if (model) {
-            pushEntry(providerId, providerConfig, model, index)
+          const modelId = readString(modelRecord.id) ?? readString(modelRecord.name)
+          if (modelId) {
+            pushEntry(
+              providerId,
+              providerConfig,
+              modelId,
+              readString(modelRecord.name),
+              index,
+            )
           }
         })
         continue
       }
 
       if (providerId === defaultProviderId) {
-        pushEntry(providerId, providerConfig, defaultModel, 0)
+        pushEntry(providerId, providerConfig, defaultModel, undefined, 0)
       }
     }
 
     if (entries.length === 0) {
-      pushEntry(defaultProviderId, asRecord(providers[defaultProviderId]), defaultModel, 0)
+      pushEntry(defaultProviderId, asRecord(providers[defaultProviderId]), defaultModel, undefined, 0)
     }
 
     if (!defaultModelId) {
       const fallbackIndex = entries.findIndex((entry) => {
         const providerId = entry.provider === 'custom-openai' ? entry.customProviderId?.trim() : entry.provider
-        return providerId === defaultProviderId && entry.model === defaultModel
+        return providerId === defaultProviderId && entry.modelId === defaultModel
       })
       defaultModelId = entries[fallbackIndex >= 0 ? fallbackIndex : 0]?.id ?? ''
     }
@@ -4013,9 +4042,10 @@ export class ManClawManager {
     }
 
     const normalizedEntries: NormalizedQuickModelEntry[] = candidate.entries.map((entry, index) => {
-      const model = entry.model.trim()
-      if (!model) {
-        throw new Error(`Model is required for entry #${index + 1}.`)
+      const modelId = entry.modelId.trim()
+      const name = entry.name?.trim() || modelId
+      if (!modelId) {
+        throw new Error(`Model ID is required for entry #${index + 1}.`)
       }
 
       if (entry.provider === 'custom-openai') {
@@ -4038,7 +4068,8 @@ export class ManClawManager {
 
         return {
           ...entry,
-          model,
+          modelId,
+          name,
           customProviderId: providerId,
           baseUrl,
           envVarName,
@@ -4059,7 +4090,8 @@ export class ManClawManager {
 
         return {
           ...entry,
-          model,
+          modelId,
+          name,
           envVarName,
           apiKey,
           providerKey: entry.provider,
@@ -4068,7 +4100,8 @@ export class ManClawManager {
 
       return {
         ...entry,
-        model,
+        modelId,
+        name,
         providerKey: entry.provider,
       }
     })
@@ -4091,8 +4124,18 @@ export class ManClawManager {
       const currentProvider: Record<string, unknown> = {
         ...structuredClone(asRecord(existingProviders[providerKey])),
       }
-      const uniqueModelIds = Array.from(new Set(providerEntries.map((entry) => entry.model)))
-      currentProvider.models = uniqueModelIds.map((modelId) => ({ id: modelId, name: modelId }))
+      const uniqueModels = Array.from(
+        new Map(
+          providerEntries.map((entry) => [
+            entry.modelId,
+            {
+              id: entry.modelId,
+              name: entry.name || entry.modelId,
+            },
+          ]),
+        ).values(),
+      )
+      currentProvider.models = uniqueModels
 
       const firstEntry = providerEntries[0]
       if (firstEntry.provider === 'custom-openai') {
@@ -4122,7 +4165,7 @@ export class ManClawManager {
     }
 
     models.providers = nextProviders
-    modelConfig.primary = `${defaultEntry.providerKey}/${defaultEntry.model}`
+    modelConfig.primary = `${defaultEntry.providerKey}/${defaultEntry.modelId}`
     return nextConfig
   }
 
@@ -4504,26 +4547,26 @@ export class ManClawManager {
     const nextEntries = candidate.entries
       .map((entry) => ({
         providerKey: resolveQuickModelProviderKey(entry),
-        model: entry.model.trim(),
+        modelId: entry.modelId.trim(),
       }))
-      .filter((entry) => entry.model)
-    const nextRefs = new Set(nextEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.model)))
-    const remainingModelIds = new Set(nextEntries.map((entry) => entry.model))
+      .filter((entry) => entry.modelId)
+    const nextRefs = new Set(nextEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.modelId)))
+    const remainingModelIds = new Set(nextEntries.map((entry) => entry.modelId))
     const removedEntries = current.entries
       .map((entry) => ({
         providerKey: resolveQuickModelProviderKey(entry),
-        model: entry.model.trim(),
+        modelId: entry.modelId.trim(),
       }))
-      .filter((entry) => entry.model)
-      .filter((entry) => !nextRefs.has(createQuickModelRef(entry.providerKey, entry.model)))
+      .filter((entry) => entry.modelId)
+      .filter((entry) => !nextRefs.has(createQuickModelRef(entry.providerKey, entry.modelId)))
 
     if (removedEntries.length === 0) {
       return
     }
 
-    const removedQualifiedRefs = new Set(removedEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.model)))
+    const removedQualifiedRefs = new Set(removedEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.modelId)))
     const removedRawModelIds = new Set(
-      removedEntries.filter((entry) => !remainingModelIds.has(entry.model)).map((entry) => entry.model),
+      removedEntries.filter((entry) => !remainingModelIds.has(entry.modelId)).map((entry) => entry.modelId),
     )
     const referencePaths: string[] = []
 
@@ -4574,7 +4617,7 @@ export class ManClawManager {
       return
     }
 
-    const removedLabels = removedEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.model))
+    const removedLabels = removedEntries.map((entry) => createQuickModelRef(entry.providerKey, entry.modelId))
     throw new Error(
       `以下模型仍被其他配置引用，无法删除：${removedLabels.join(', ')}。引用位置：${referencePaths.join(', ')}`,
     )
@@ -5108,13 +5151,8 @@ export class ManClawManager {
       return
     }
 
-    const deadline = Date.now() + 3_000
-    while (Date.now() < deadline) {
-      if (!(await this.isPidRunning(pid))) {
-        return
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 150))
+    if (await this.waitForPidExit(pid, 3_000)) {
+      return
     }
 
     try {
@@ -5122,6 +5160,21 @@ export class ManClawManager {
     } catch {
       return
     }
+
+    await this.waitForPidExit(pid, 2_000)
+  }
+
+  private async waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (!(await this.isPidRunning(pid))) {
+        return true
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+
+    return !(await this.isPidRunning(pid))
   }
 
   private attachChildListeners(service: ManClawConfig['service'], child: ManagedChildProcess): void {

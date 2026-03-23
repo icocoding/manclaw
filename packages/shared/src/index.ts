@@ -149,7 +149,8 @@ export type QuickModelProvider = 'openai' | 'anthropic' | 'google' | 'openrouter
 export interface QuickModelEntry {
   id: string
   provider: QuickModelProvider
-  model: string
+  modelId: string
+  name?: string
   apiKey?: string
   baseUrl?: string
   customProviderId?: string

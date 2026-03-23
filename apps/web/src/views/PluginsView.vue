@@ -58,7 +58,7 @@
         <div class="section-header">
           <div>
             <p class="panel__label">OpenClaw Plugins</p>
-            <h3>{{ plugins.loadedCount }}/{{ plugins.totalCount }} 已加载</h3>
+            <h3>{{ filteredLoadedCount }}/{{ filteredPlugins.length }} 已加载</h3>
           </div>
           <p class="panel__muted">这里的 `disabled` 表示已发现但未启用，不等于“未安装待安装”。最佳实践已迁到独立页面。</p>
         </div>
@@ -69,6 +69,15 @@
           <n-button tertiary :type="statusFilter === 'disabled' ? 'primary' : 'default'" @click="statusFilter = 'disabled'">仅禁用</n-button>
           <RouterLink class="nav-action" to="/best-practices">前往最佳实践</RouterLink>
         </div>
+
+        <label class="field">
+          <span class="field__label">插件筛选</span>
+          <n-input
+            v-model:value="pluginFilter"
+            class="field-control"
+            placeholder="按名称、ID、来源、工具名、渠道或 provider 过滤，例如 feishu / bitable / channel"
+          />
+        </label>
 
         <p class="status-text" :class="{ 'status-text--error': isError }">{{ message }}</p>
 
@@ -277,6 +286,7 @@ const toolsModalPluginId = ref('')
 const toolsModalLoading = ref(false)
 const toolsModalCheckedToolNames = ref<string[]>([])
 const statusFilter = ref<'all' | 'enabled' | 'disabled'>('all')
+const pluginFilter = ref('')
 const busy = reactive({
   refresh: false,
   feishuTools: false,
@@ -289,16 +299,44 @@ const expandedPluginIds = ref<string[]>([])
 const pluginDetails = reactive<Record<string, OpenClawPluginsDocument['items'][number] | undefined>>({})
 const pluginDetailErrors = reactive<Record<string, string | undefined>>({})
 const filteredPlugins = computed(() => {
-  if (statusFilter.value === 'enabled') {
-    return plugins.value.items.filter((item) => item.enabled)
-  }
+  const filter = pluginFilter.value.trim().toLowerCase()
 
-  if (statusFilter.value === 'disabled') {
-    return plugins.value.items.filter((item) => !item.enabled)
-  }
+  return plugins.value.items.filter((item) => {
+    if (statusFilter.value === 'enabled' && !item.enabled) {
+      return false
+    }
 
-  return plugins.value.items
+    if (statusFilter.value === 'disabled' && item.enabled) {
+      return false
+    }
+
+    if (!filter) {
+      return true
+    }
+
+    const haystack = [
+      item.name,
+      item.id,
+      item.description,
+      item.source,
+      item.origin,
+      item.version,
+      item.status,
+      ...item.toolNames,
+      ...item.channelIds,
+      ...item.providerIds,
+      ...item.commands,
+      ...item.cliCommands,
+      ...item.services,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+      .join('\n')
+      .toLowerCase()
+
+    return haystack.includes(filter)
+  })
 })
+const filteredLoadedCount = computed(() => filteredPlugins.value.filter((item) => item.status === 'loaded').length)
 
 const loadedPluginNames = computed(() => {
   const names = plugins.value.items.filter((item) => item.status === 'loaded').map((item) => item.name)
