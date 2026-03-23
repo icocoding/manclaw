@@ -321,7 +321,16 @@ async function update() {
     await execFileAsync('npm', ['install', '--omit=dev', '--prefix', releaseDir], {
       env: process.env,
     })
-    await execFileAsync('npm', ['install', '-g', releaseDir], {
+    const { stdout: packedTarballName } = await execFileAsync('npm', ['pack'], {
+      cwd: releaseDir,
+      env: process.env,
+    })
+    const tarballName = packedTarballName.trim().split('\n').at(-1)?.trim()
+    if (!tarballName) {
+      throw new Error('Failed to package the downloaded release for global install.')
+    }
+
+    await execFileAsync('npm', ['install', '-g', path.join(releaseDir, tarballName)], {
       env: process.env,
     })
 
