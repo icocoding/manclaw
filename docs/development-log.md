@@ -4,6 +4,9 @@
 
 ### 已完成
 
+- 概览页收口接入设置摘要：不再突出 `Service` 这个内部管理概念，改为直接显示用户更关心的 `当前 Profile`、`OpenClaw 工作区` 和配置文件路径。其中工作区直接展示当前 OpenClaw 实际解析出的 workspace，而不是让用户再去理解 service/cwd 的管理语义
+- 概览页补充“当前 Profile”展示：接入设置区现在会明确显示当前 service 对应的 OpenClaw profile；`profileMode=default` 显示为 `default`，`--dev` 显示为 `dev`，命名 profile 则显示具体 `profileName`，避免用户只看到 Service 名称仍难以判断当前到底连的是哪个 profile
+- 修正概览页对 service `cwd` 的描述：接入设置区不再把 `service.cwd` 直接展示成“当前工作目录”，避免和 OpenClaw workspace 混淆。现在统一改成“命令执行目录”，并在值为 `.` 时明确标注为“跟随 manclaw 当前运行目录”，同时补一句说明这不等于 OpenClaw 实际 workspace
 - 修复 `manclaw update` 后全局命令消失的问题：原更新流程会把临时解压目录直接 `npm install -g`，再删除临时目录；在本地目录安装场景下，全局 CLI 入口会残留到已删除的临时路径，导致 `/usr/bin/manclaw: No such file or directory`。现已改成更新时先在临时 release 目录执行 `npm pack`，再全局安装生成的 tarball，保证清理临时目录后全局命令仍可用
 - 修复“最佳实践 -> 一键更换 Model ID”表单状态未回刷的问题：迁移成功后，旧模型下拉现在会同步切到新的目标值，避免数据已经更新但表单仍停留在旧 ID，造成看起来“没有刷新”的错觉
 - 修正“最佳实践 -> 一键更换 Model ID”的保存顺序：原实现先改模型列表，再改默认模型和 Agent 引用，会被后端的“模型仍被其它配置引用”保护拦下，导致 `/api/model-setup/apply` 直接返回 400。现已改成先保存 Agent 默认模型和显式绑定，再改模型列表，避免旧 ID 还在被引用时提前触发删除保护

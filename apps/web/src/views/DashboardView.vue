@@ -58,8 +58,8 @@
           <n-button type="primary" :disabled="busy.settings" @click="saveManagerSettings">保存接入设置</n-button>
         </div>
 
-        <p class="panel__muted">当前 Service：{{ managerSettings?.config.service.label || managerSettings?.config.service.id || '--' }}</p>
-        <p class="panel__muted">当前工作目录：{{ managerSettings?.config.service.cwd ?? '--' }}</p>
+        <p class="panel__muted">当前 Profile：{{ currentProfileLabel }}</p>
+        <p class="panel__muted">OpenClaw 工作区：{{ openclawWorkspaceLabel }}</p>
         <p class="panel__muted">当前配置文件：{{ managerSettings?.config.service.configPath?.trim() || '--' }}</p>
         <p class="status-text">{{ managerMessage }}</p>
       </article>
@@ -324,6 +324,29 @@ const hasPendingManagerChanges = computed(() => {
     managerForm.autoStart !== savedTarget.autoStart ||
     managerForm.autoRestart !== savedTarget.autoRestart
   )
+})
+const openclawWorkspaceLabel = computed(() => {
+  const raw = managerSettings.value?.config.service.cwd
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return '--'
+  }
+  return raw.trim()
+})
+const currentProfileLabel = computed(() => {
+  const service = managerSettings.value?.config.service
+  if (!service) {
+    return '--'
+  }
+
+  if (service.profileMode === 'dev') {
+    return 'dev'
+  }
+
+  if (service.profileMode === 'profile' && service.profileName?.trim()) {
+    return service.profileName.trim()
+  }
+
+  return 'default'
 })
 
 function formatDateTime(value?: string): string {
