@@ -2,16 +2,12 @@
 
 ## 项目定位
 
-`manclaw` 是一款面向 `openclaw` 的服务管理工具，目标能力包括：
+`manclaw` 是面向 `openclaw` 的管理控制面，重点在于把运行态观测、配置治理、插件与技能管理、受控操作和 Web UI 收拢到统一入口。
 
-- 服务监控
-- 配置管理
-- 插件管理
-- 技能管理
-- Shell 执行
-- Web UI
+协作时优先遵循两个原则：
 
-项目当前处于骨架阶段，重点是先把基础架构、后端能力和前端管理台打稳。
+- 核心价值先落在服务端能力和受控系统交互上，不把重心放在静态页面堆砌
+- 代码、文档和对外表达保持一致，不把计划中的能力描述成已经可用
 
 ## 技术栈约定
 
@@ -35,55 +31,33 @@ packages/
   shared/     # 共享类型、常量、协议
   core/       # openclaw 核心管理逻辑
 docs/
-  architecture.md
   api.md
+  roadmap.md
+
+../manclaw-dev/docs/
+  architecture.md
   development-log.md
+  development-log/
+  promo-kit.md
 ```
 
-新增模块时，优先保持以下原则：
+新增模块时优先遵循以下边界：
 
 - UI 放在 `apps/web`
 - API 与系统能力放在 `apps/server`
 - 可复用类型放在 `packages/shared`
 - 领域能力放在 `packages/core`
-- 设计说明和过程记录放在 `docs/`
+- 内部 API 和 roadmap 放在 `docs/`
+- 对外架构、宣传材料和开发记录放在 `../manclaw-dev/docs/`
 
 ## 开发原则
 
-### 1. 先服务端，后界面细化
+- 先服务端，后界面细化
+- 安全优先：Shell、高权限操作、配置写入必须走受控模型
+- 保持类型共享：前后端交互结构优先定义在 `packages/shared`
+- 小步推进：每次改动优先完成一个可闭环的小目标
 
-`manclaw` 的核心价值不在静态页面，而在真实的服务管理能力。开发顺序优先：
-
-1. `openclaw` 进程探测与状态采集
-2. 配置文件读写与校验
-3. Shell 安全执行
-4. 插件与技能生命周期管理
-5. 前端接入与交互完善
-
-### 2. 安全优先
-
-Shell 执行、高权限操作、配置写入都必须按受控模型设计：
-
-- 不直接拼接用户命令
-- 优先使用预定义命令或白名单
-- 记录审计日志
-- 支持超时、中断、错误回传
-
-### 3. 保持类型共享
-
-前后端交互的数据结构优先定义在 `packages/shared`，避免前后端各写一套。
-
-### 4. 小步推进
-
-每次改动优先完成一个可闭环的小目标，例如：
-
-- 加一个真实的健康检查接口
-- 加一个配置读取接口
-- 接通一个 Dashboard 状态卡片
-
-不要一口气铺开整套插件系统但没有任何可运行结果。
-
-## 代码风格约定
+## 代码约定
 
 ### 命名
 
@@ -97,8 +71,7 @@ Shell 执行、高权限操作、配置写入都必须按受控模型设计：
 
 - Vue 组件优先使用 `script setup`
 - 页面组件放在 `views/`
-- 可复用 UI 组件后续放在 `components/`
-- 前端开发优先复用现成组件库或项目内已有组件；只有在现成组件明显不满足需求时，再补自定义基础控件
+- 可复用 UI 组件优先放在 `components/`
 - 页面状态优先放在 `Pinia` 或组合式函数中，不要把业务逻辑堆在模板里
 - 样式优先保证结构清晰和可维护，避免内联样式泛滥
 
@@ -122,73 +95,29 @@ Shell 执行、高权限操作、配置写入都必须按受控模型设计：
 - 修改功能代码时，如果影响架构、流程或使用方式，同时更新文档
 - 没有实现完成的能力可以先提供占位结构，但要明确标注状态
 - 不要把“计划中的能力”描述成“已经可用”
-- commit message 必须准确对应当前提交内容，避免使用空泛标题
+- commit message 必须准确对应当前提交内容
 - commit title 优先使用简洁英文短句，直接说明本次改动目标
 - 当一个提交同时包含规则、文档、脚本或实现联动调整时，优先补充 commit body，写清主要变更点和边界
-- 不要用与实际改动不符的 commit message，也不要把历史上下文或预期中的改动写进当前提交说明
-
-### 文档更新时间点
-
-出现以下情况时需要同步更新 `docs/`：
-
-- 新增核心模块或目录
-- 调整 API 边界或核心数据结构
-- 修改开发启动方式
-- 改变插件、技能、Shell 的实现策略
-- 完成一个重要阶段性里程碑
 
 ## 文档维护约定
 
 - 根 `README.md` 只保留项目简介、目录入口和启动方式
-- 架构设计写入 `docs/architecture.md`
 - API 设计写入 `docs/api.md`
-- 开发过程、阶段结果、后续计划写入 `docs/development-log.md`
-- 每完成一个明确任务，都要同步更新一次 `docs/development-log.md`
-- 每开始一个新任务前，先查看 `docs/development-log.md`，再继续开发
-
-如果后续出现更细的专题，新增到 `docs/`，例如：
-
-- `docs/plugin-system.md`
-- `docs/shell-security.md`
-
-## 当前实现状态
-
-当前仓库已经具备：
-
-- `pnpm workspace` 根结构
-- `apps/web` 最小 Vue 页面骨架
-- `apps/server` 最小 Fastify 服务骨架
-- `packages/shared` 基础共享类型
-- `packages/core` 基础健康快照占位逻辑
-
-当前尚未完成：
-
-- `openclaw` 进程探测
-- 配置文件管理
-- 插件与技能动态加载
-- Shell 执行能力
-- 实时事件推送
-
-## 后续协作建议
-
-后续进行代码修改时，优先按以下顺序推进：
-
-1. 完善 `apps/server` 的系统能力
-2. 抽取共享类型到 `packages/shared`
-3. 将核心逻辑沉淀到 `packages/core`
-4. 最后在 `apps/web` 接入和展示
+- 版本规划写入 `docs/roadmap.md`
+- 架构设计写入 `../manclaw-dev/docs/architecture.md`
+- 开发记录总览写入 `../manclaw-dev/docs/development-log.md`
+- 每日开发记录按日期写入 `../manclaw-dev/docs/development-log/YYYY-MM-DD.md`
+- 每开始一个新任务前，先查看最新开发记录
+- 每完成一个明确任务后，立即补一条开发记录
 
 如果新增重要能力，同时更新：
 
-- `docs/architecture.md`
 - `docs/api.md`
-- `docs/development-log.md`
+- `docs/roadmap.md`
+- `../manclaw-dev/docs/architecture.md`
+- `../manclaw-dev/docs/development-log.md`
 
-保持代码与文档同步。
+## 补充要求
 
-补充执行要求：
-
-- 新任务开始前先阅读最新开发记录，避免上下文断裂
-- 每次任务完成后立即补一条开发记录，不要集中到最后一次性回填
-- 更新 README、`docs/`、发布说明或开发记录时，不要保留宿主机绝对路径、用户名目录、私有部署目录等环境敏感信息；如需举例，统一改为相对路径、通用占位路径或用户主目录形式（如 `~/.openclaw/...`）
-- 当用户说“release”时，默认理解为执行 git 触发发布：优先使用 `scripts/trigger-git-release.sh`，或执行等价的“创建包含 `[release]` 的空提交并推送到 `master`”流程；不要擅自改成手工打包、仅本地构建或其他发布含义
+- 更新 README、`docs/`、发布说明或开发记录时，不要保留宿主机绝对路径、用户名目录、私有部署目录等环境敏感信息；如需举例，统一改为相对路径、通用占位路径或用户主目录形式，例如 `~/.openclaw/...`
+- 当用户说“release”时，默认理解为执行 git 触发发布：优先使用 `scripts/trigger-git-release.sh`，或执行等价的“创建包含 `[release]` 的空提交并推送到 `master`”流程

@@ -4,13 +4,16 @@
 
 # ManClaw
 
-`manclaw` 是一款 `openclaw` 的服务管理工具，当前已落成第一阶段 MVP，覆盖：
+`manclaw` 是一款面向 `openclaw` 的管理控制面，用来把真实运行环境里的观测、配置、治理和受控操作收拢到一个统一入口。
 
-- 服务监控与启停控制
-- 配置管理与版本回滚
-- 运行日志与审计日志查看
-- 受控 Shell 命令执行
-- Web UI 控制台
+当前系统功能主要围绕六个维度展开：
+
+1. 多 Profile、多 Agent 管理
+2. 模型与通讯渠道管理
+3. Agent、Channel、Model 绑定关系
+4. 插件与技能管理
+5. OpenClaw 服务运行与诊断
+6. 最佳实践与治理动作
 
 ## 项目结构
 
@@ -22,35 +25,27 @@ packages/
   shared/     # 共享类型与常量
   core/       # 核心管理逻辑
 docs/
-  architecture.md      # 架构设计
   api.md               # API 设计
   roadmap.md           # 版本规划
-  development-log.md   # 开发记录
 ```
 
 ## 文档
 
-- [架构设计](./docs/architecture.md)
+- 对外文档：`manclaw-dev/docs/`
 - [API 设计](./docs/api.md)
 - [版本规划](./docs/roadmap.md)
-- [开发记录](./docs/development-log.md)
+- [开发记录总览](../manclaw-dev/docs/development-log.md)
 - [开源协议](./LICENSE)
 
-当前已在 [版本规划](./docs/roadmap.md) 中补充后续版本规划，重点包括：
+当前控制台页面已覆盖：
 
-- 独立模型配置页与多模型默认值管理
-- 多 Agents 配置
-- 多 Channels 配置
-- 插件安装与管理
-
-当前结构化管理页面已覆盖：
-
-- `概览`：服务状态、配置、日志、受控命令
-- `模型`：多模型条目与默认模型
-- `Agents`：角色参数、bindings、tools、session
-- `Channels`：`channels` 实例与到 Agent 的绑定关系
-- `插件`：插件列表、启用/禁用、Tools 管理
-- `技能`：工作区技能与系统技能
+- `Overview`：当前 Profile、OpenClaw 工作区、配置文件、默认模型、日志与受控命令入口
+- `Models`：provider、Model ID、默认模型
+- `Agents`：默认 Agent、workspace、bindings、tools、session
+- `Channels`：渠道实例与到 Agent 的绑定关系
+- `Plugins`：插件列表、启用/禁用、Tools 管理与筛选
+- `Skills`：系统技能、工作区技能、安装、更新、启用、禁用、删除与筛选
+- `Best Practices`：收紧 Feishu 能力暴露、快速新增 Feishu Channel、一键新增预设 Agent、Session Cleanup、一键更换 Model ID
 
 ## 启动
 
@@ -93,10 +88,6 @@ VITE_API_PROXY_TARGET=http://127.0.0.1:18300
 
 - Web UI: `http://localhost:5173`
 - Server API: `http://localhost:18300`
-
-## 开源协议
-
-本项目采用 [MIT License](./LICENSE)。
 
 ## 1.0 发布方式
 
@@ -214,6 +205,10 @@ manclaw stop
 ```bash
 MANCLAW_HOME=/path/to/manclaw-home manclaw start
 ```
+
+## 开源协议
+
+本项目采用 [MIT License](./LICENSE)。
 
 如果要自动下载 GitHub 最新 release zip、解压并自动全局安装：
 
