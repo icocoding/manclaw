@@ -2,7 +2,7 @@
   <section class="page">
     <header id="overview" class="hero hero--wide">
       <div>
-        <p class="eyebrow">MVP Console</p>
+        <p class="eyebrow">Operator Console</p>
         <h2>Command Your Claw.</h2>
       </div>
       <div class="hero__actions">
