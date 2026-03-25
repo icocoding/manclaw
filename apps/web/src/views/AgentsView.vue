@@ -54,7 +54,14 @@
 
           <label class="field">
             <span class="field__label">默认 Compaction</span>
-            <n-input v-model:value="defaults.compactionMode" class="field-control" placeholder="safeguard" />
+            <n-select
+              :value="defaults.compactionMode || null"
+              class="field-control"
+              clearable
+              :options="compactionModeOptions"
+              placeholder="选择默认 Compaction"
+              @update:value="(value) => { defaults.compactionMode = String(value ?? '') }"
+            />
           </label>
         </div>
 
@@ -140,7 +147,14 @@
 
                 <label class="field field--span-2">
                   <span class="field__label">Compaction</span>
-                  <n-input v-model:value="agent.compactionMode" class="field-control" placeholder="留空则继承默认值" />
+                  <n-select
+                    :value="agent.compactionMode || null"
+                    class="field-control"
+                    clearable
+                    :options="compactionModeOptions"
+                    placeholder="留空则继承默认值"
+                    @update:value="(value) => { agent.compactionMode = String(value ?? '') }"
+                  />
                 </label>
               </div>
 
@@ -344,6 +358,10 @@ const toolsProfileOptions: Array<{ label: string; value: AgentToolsProfile }> = 
   { label: 'coding', value: 'coding' },
   { label: 'messaging', value: 'messaging' },
   { label: 'full', value: 'full' },
+]
+const compactionModeOptions = [
+  { label: 'default', value: 'default' },
+  { label: 'safeguard', value: 'safeguard' },
 ]
 
 const defaultAgentOptions = computed(() =>
