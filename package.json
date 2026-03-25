@@ -1,6 +1,6 @@
 {
   "name": "manclaw",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "license": "MIT",
   "description": "openclaw service management tool with monitoring, config, plugin, skill, shell, and Web UI support.",
