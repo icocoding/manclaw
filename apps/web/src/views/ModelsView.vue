@@ -98,7 +98,14 @@
 
                 <label v-if="providerMeta(group.provider)?.requiresApiKey" class="field">
                   <span class="field__label">API Key</span>
-                  <n-input v-model:value="group.apiKey" class="field-control" type="password" show-password-on="click" placeholder="sk-..." />
+                  <n-input
+                    v-model:value="group.apiKey"
+                    class="field-control"
+                    type="password"
+                    show-password-on="click"
+                    :placeholder="group.apiKeyConfigured && !group.apiKey ? '当前已存在受控 secret，留空则保留原配置' : 'sk-...'"
+                  />
+                  <span v-if="group.apiKeyConfigured && !group.apiKey" class="field__hint">当前 provider 已存在受控 secret 配置；如果这次只改模型 ID，可以留空并保留原有 secret。</span>
                 </label>
 
                 <label v-if="providerMeta(group.provider)?.supportsCustomProviderId" class="field">
@@ -191,6 +198,7 @@ interface ModelProviderGroup {
     modelId: string
   }>
   apiKey: string
+  apiKeyConfigured: boolean
   baseUrl: string
   customProviderId: string
   envVarName: string
@@ -268,6 +276,7 @@ function createProviderGroup(provider: QuickModelProvider = 'openai'): ModelProv
     provider,
     models: [createGroupModelEntry()],
     apiKey: '',
+    apiKeyConfigured: false,
     baseUrl: '',
     customProviderId: '',
     envVarName: provider === 'custom-openai' ? 'LLM_API_KEY' : '',
@@ -362,6 +371,7 @@ function updateGroupProvider(groupId: string, provider: QuickModelProvider): voi
   }
   if (provider === 'ollama') {
     group.apiKey = ''
+    group.apiKeyConfigured = false
   }
 }
 
@@ -459,13 +469,13 @@ async function validateQuickModelSetup(): Promise<boolean> {
       return false
     }
 
-    if (providerMeta(group.provider)?.requiresApiKey && !group.apiKey.trim()) {
+    if (providerMeta(group.provider)?.requiresApiKey && !group.apiKey.trim() && !group.apiKeyConfigured) {
       quickModelMessage.value = `${entryLabel} 缺少 API Key。`
       await focusGroup(group.id)
       return false
     }
 
-    if (providerMeta(group.provider)?.supportsCustomProviderId && !group.envVarName.trim()) {
+    if (providerMeta(group.provider)?.supportsCustomProviderId && !group.envVarName.trim() && group.apiKey.trim()) {
       quickModelMessage.value = `${entryLabel} 缺少环境变量名。`
       await focusGroup(group.id)
       return false
@@ -484,7 +494,8 @@ function applyQuickModelSettings(document: QuickModelConfigDocument): void {
     const baseUrl = entry.baseUrl ?? ''
     const envVarName = entry.envVarName ?? ''
     const apiKey = entry.apiKey ?? ''
-    const groupKey = [provider, customProviderId, baseUrl, envVarName, apiKey].join('||')
+    const apiKeyConfigured = Boolean(entry.apiKeyConfigured)
+    const groupKey = [provider, customProviderId, baseUrl, envVarName, apiKey, apiKeyConfigured ? 'configured' : 'empty'].join('||')
 
     if (!grouped.has(groupKey)) {
       const group = createProviderGroup(provider)
@@ -492,6 +503,7 @@ function applyQuickModelSettings(document: QuickModelConfigDocument): void {
       group.baseUrl = baseUrl
       group.envVarName = envVarName
       group.apiKey = apiKey
+      group.apiKeyConfigured = apiKeyConfigured
       group.models = []
       grouped.set(groupKey, group)
     }
@@ -523,6 +535,7 @@ function applyQuickModelSettings(document: QuickModelConfigDocument): void {
       group.baseUrl === (defaultEntry.baseUrl ?? '') &&
       group.envVarName === (defaultEntry.envVarName ?? '') &&
       group.apiKey === (defaultEntry.apiKey ?? '') &&
+      group.apiKeyConfigured === Boolean(defaultEntry.apiKeyConfigured) &&
       group.models.some((entry) => entry.modelId === defaultEntry.modelId),
     )
     defaultModelKey.value = matchedGroup ? createDefaultModelKey(matchedGroup.id, defaultEntry.modelId) : ''
@@ -580,6 +593,7 @@ async function applyQuickModelSetup(): Promise<void> {
             provider: group.provider,
             modelId: entry.modelId,
             apiKey: group.apiKey.trim() || undefined,
+            apiKeyConfigured: group.apiKeyConfigured,
             baseUrl: group.baseUrl.trim() || undefined,
             customProviderId: group.customProviderId.trim() || undefined,
             envVarName: group.envVarName.trim() || undefined,

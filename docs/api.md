@@ -353,8 +353,9 @@
 
 - `id`
 - `provider`
-- `model`
+- `modelId`
 - `apiKey`
+- `apiKeyConfigured`
 - `baseUrl`
 - `customProviderId`
 - `envVarName`
@@ -372,13 +373,13 @@
     {
       "id": "openai-gpt-5-2-1",
       "provider": "openai",
-      "model": "gpt-5.2",
+      "modelId": "gpt-5.2",
       "apiKey": "sk-xxx"
     },
     {
       "id": "ollama-llama3-3-2",
       "provider": "ollama",
-      "model": "llama3.3"
+      "modelId": "llama3.3"
     }
   ]
 }
@@ -388,6 +389,12 @@
 
 - `models.providers[*].models`
 - `agents.defaults.model.primary`
+
+补充说明：
+
+- 当现有 provider 已配置受控 `apiKey`（例如文件引用或其他非明文结构）时，`GET /api/model-setup/current` 会返回 `apiKeyConfigured=true`
+- 这类 provider 在 `POST /api/model-setup/apply` 时，如果请求里没有新的 `apiKey`，服务端会保留原有 secret 配置，不要求重填
+- 对于保留下来的已有模型条目，服务端会尽量复用 `models.providers[*].models[*]` 原始对象，避免把额外元数据缩减成只有 `id` / `name`
 
 ## Agent 管理
 
@@ -403,7 +410,9 @@
 - `defaults.workspace`
 - `defaults.modelPrimary`
 - `defaults.compactionMode`
+- `defaults.subagents.*`
 - `availableChannels`
+- `openClawAgentsUrl`
 - `items`
 
 `items` 中每个条目包含：
@@ -417,13 +426,20 @@
 - `tools.profile`
 - `tools.allow`
 - `tools.deny`
+- `subagents.modelPrimary`
+- `subagents.thinking`
+- `subagents.allowAgents`
+- `subagents.maxConcurrent / maxSpawnDepth / maxChildrenPerAgent`
+- `subagents.archiveAfterMinutes / runTimeoutSeconds / announceTimeoutMs`
 
 说明：
 
 - 当前阶段默认 Agent 采用 `agents.list` 第一项表示
 - 保存时会按默认 Agent 重排 `agents.list`
-- `items[*].bindings[]` 会按页面填写重建到 `bindings[*].match`
+- `items[*].bindings[]` 保存时会更新受管 binding 的 `agentId`、`match.channel` 和可选 `match.accountId`
 - 当前结构化绑定规则支持 `channel` 和可选 `accountId`
+- 对于受管 Agent / binding 上未在页面暴露的其他字段，服务端会尽量保留，不因为结构化保存整块抹掉
+- `openClawAgentsUrl` 指向 OpenClaw 控制台的 `/agents` 页面；当 `gateway.auth.mode = token` 且配置中存在 token 时，会自动附带 `#token=...`
 
 ### `POST /api/agents/save`
 
@@ -437,7 +453,18 @@
   "defaults": {
     "workspace": "~/.openclaw/workspace",
     "modelPrimary": "bailian/qwen3.5-plus",
-    "compactionMode": "safeguard"
+    "compactionMode": "safeguard",
+    "subagents": {
+      "modelPrimary": "bailian/qwen3.5-flash-2026-02-23",
+      "thinking": "low",
+      "maxConcurrent": 8,
+      "maxSpawnDepth": 2,
+      "maxChildrenPerAgent": 5,
+      "archiveAfterMinutes": 60,
+      "runTimeoutSeconds": 900,
+      "announceTimeoutMs": 90000,
+      "allowAgents": []
+    }
   },
   "items": [
     {
@@ -452,6 +479,17 @@
       "workspace": "",
       "modelPrimary": "",
       "compactionMode": "",
+      "subagents": {
+        "modelPrimary": "",
+        "thinking": "",
+        "allowAgents": ["main", "lite"],
+        "maxConcurrent": 4,
+        "maxSpawnDepth": 2,
+        "maxChildrenPerAgent": 5,
+        "archiveAfterMinutes": 30,
+        "runTimeoutSeconds": 600,
+        "announceTimeoutMs": 90000
+      },
       "tools": {
         "profile": "messaging",
         "allow": ["feishu", "group:plugins"],
@@ -461,6 +499,13 @@
   ]
 }
 ```
+
+说明：
+
+- 当前 `subagents.modelPrimary` 统一按对象形式写回真实配置：`subagents.model.primary`
+- 当前已支持默认 `agents.defaults.subagents` 和每个 `agents.list[].subagents` 的结构化编辑，包括默认层与单 Agent 层的 `allowAgents`
+- 对于 `subagents` / `subagents.model` 中未在页面暴露的其他字段，服务端会尽量保留
+- 当前未在页面暴露 `subagents.model.fallbacks` 或 `tools.subagents.tools` 这类更细分的高级字段
 
 ## Channels 管理
 
@@ -493,7 +538,8 @@
 
 - `id` 对应 `channels.<id>`
 - `configText` 为该 channel 节点对应的 JSON 对象文本
-- 保存时会重建页面管理范围内的 `bindings[*].match.channel`
+- 保存时会更新页面管理范围内 binding 的 `agentId`、`match.channel` 和可选 `match.accountId`
+- 对于这些 binding 上未在页面暴露的其他字段，服务端会尽量保留
 - 当前支持在 Channels 页按 `agentId + accountId` 维护映射关系
 
 ### `POST /api/channels/save`

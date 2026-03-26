@@ -54,7 +54,7 @@
           <p class="panel__label">Channel 列表</p>
           <h3>逐个维护实例配置与 Agent 映射</h3>
         </div>
-        <p class="panel__muted">`Channel ID` 对应 `channels.&lt;id&gt;`；右侧绑定会重建 `bindings[*].match.channel` 与可选 `accountId`。</p>
+        <p class="panel__muted">`Channel ID` 对应 `channels.&lt;id&gt;`；右侧绑定会更新受管 binding 的 `match.channel` 与可选 `accountId`，其余未暴露字段尽量保留。</p>
       </div>
 
       <template v-if="channels.length">

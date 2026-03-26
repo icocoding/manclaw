@@ -152,6 +152,7 @@ export interface QuickModelEntry {
   modelId: string
   name?: string
   apiKey?: string
+  apiKeyConfigured?: boolean
   baseUrl?: string
   customProviderId?: string
   envVarName?: string
@@ -214,6 +215,7 @@ export interface AgentDefaultsConfig {
   workspace: string
   modelPrimary: string
   compactionMode: string
+  subagents: AgentSubagentsConfig
 }
 
 export type AgentToolsProfile = 'minimal' | 'coding' | 'messaging' | 'full'
@@ -224,6 +226,18 @@ export interface AgentToolsConfig {
   deny: string[]
 }
 
+export interface AgentSubagentsConfig {
+  modelPrimary?: string
+  thinking?: string
+  maxConcurrent?: number
+  maxSpawnDepth?: number
+  maxChildrenPerAgent?: number
+  archiveAfterMinutes?: number
+  runTimeoutSeconds?: number
+  announceTimeoutMs?: number
+  allowAgents: string[]
+}
+
 export interface AgentConfigEntry {
   sourceId: string
   id: string
@@ -232,6 +246,7 @@ export interface AgentConfigEntry {
   modelPrimary?: string
   compactionMode?: string
   tools?: AgentToolsConfig
+  subagents?: AgentSubagentsConfig
   resolvedWorkspace?: string
   skillsDir?: string
   disabledSkillsDir?: string
@@ -249,6 +264,7 @@ export interface AgentConfigPayload {
 
 export interface AgentConfigDocument extends AgentConfigPayload {
   availableChannels: AgentChannelOption[]
+  openClawAgentsUrl?: string
 }
 
 export interface AgentWorkspaceSkillEntry {

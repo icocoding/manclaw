@@ -11,6 +11,7 @@ import type {
   AgentConfigDocument,
   AgentConfigEntry,
   AgentConfigPayload,
+  AgentSubagentsConfig,
   AgentToolsProfile,
   AgentWorkspaceSkillEntry,
   ChannelConfigDocument,
@@ -458,6 +459,10 @@ function createQuickModelRef(providerKey: string, model: string): string {
   return `${providerKey}/${model.trim()}`
 }
 
+function hasOwnKeys(value: Record<string, unknown>): boolean {
+  return Object.keys(value).length > 0
+}
+
 function createAgentSourceId(agentId: string, index: number): string {
   const normalizedId = agentId.trim() || 'agent'
   return `${normalizedId}::${index + 1}`
@@ -574,6 +579,93 @@ function readStringList(value: unknown): string[] {
         ),
       )
     : []
+}
+
+function readPositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined
+  }
+
+  const normalized = Math.floor(value)
+  return normalized > 0 ? normalized : undefined
+}
+
+function readNonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined
+  }
+
+  const normalized = Math.floor(value)
+  return normalized >= 0 ? normalized : undefined
+}
+
+function readModelPrimarySelection(value: unknown): string | undefined {
+  const direct = readString(value)
+  if (direct) {
+    return direct
+  }
+
+  return readString(asRecord(value).primary)
+}
+
+function readAgentSubagents(value: unknown): AgentSubagentsConfig {
+  const subagents = asRecord(value)
+  return {
+    modelPrimary: readModelPrimarySelection(subagents.model),
+    thinking: readString(subagents.thinking),
+    maxConcurrent: readPositiveInteger(subagents.maxConcurrent),
+    maxSpawnDepth: readPositiveInteger(subagents.maxSpawnDepth),
+    maxChildrenPerAgent: readPositiveInteger(subagents.maxChildrenPerAgent),
+    archiveAfterMinutes: readNonNegativeInteger(subagents.archiveAfterMinutes),
+    runTimeoutSeconds: readNonNegativeInteger(subagents.runTimeoutSeconds),
+    announceTimeoutMs: readPositiveInteger(subagents.announceTimeoutMs),
+    allowAgents: readStringList(subagents.allowAgents),
+  }
+}
+
+function isEmptyAgentSubagents(value: AgentSubagentsConfig | undefined): boolean {
+  if (!value) {
+    return true
+  }
+
+  return !(
+    value.modelPrimary ||
+    value.thinking ||
+    typeof value.maxConcurrent === 'number' ||
+    typeof value.maxSpawnDepth === 'number' ||
+    typeof value.maxChildrenPerAgent === 'number' ||
+    typeof value.archiveAfterMinutes === 'number' ||
+    typeof value.runTimeoutSeconds === 'number' ||
+    typeof value.announceTimeoutMs === 'number' ||
+    value.allowAgents.length > 0
+  )
+}
+
+function parseOptionalIntegerField(
+  value: unknown,
+  fieldName: string,
+  options: {
+    min: number
+    max?: number
+  },
+): number | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new Error(`${fieldName} must be an integer.`)
+  }
+
+  if (value < options.min) {
+    throw new Error(`${fieldName} must be >= ${options.min}.`)
+  }
+
+  if (typeof options.max === 'number' && value > options.max) {
+    throw new Error(`${fieldName} must be <= ${options.max}.`)
+  }
+
+  return value
 }
 
 const AGENT_TOOLS_PROFILE_VALUES = new Set(['minimal', 'coding', 'messaging', 'full'])
@@ -3737,6 +3829,21 @@ export class ManClawManager {
     return path.isAbsolute(discoveredPath) ? discoveredPath : path.resolve(this.rootDir, discoveredPath)
   }
 
+  private buildOpenClawAgentsUrl(config: Record<string, unknown>, service: ManClawConfig['service']): string {
+    const port = typeof service.port === 'number' && Number.isFinite(service.port) && service.port > 0 ? service.port : 18789
+    const baseUrl = `http://127.0.0.1:${port}/agents`
+    const gateway = asRecord(config.gateway)
+    const auth = asRecord(gateway.auth)
+    const authMode = readString(auth.mode)?.trim()
+    const authToken = readString(auth.token)?.trim()
+
+    if (authMode === 'token' && authToken) {
+      return `${baseUrl}#token=${encodeURIComponent(authToken)}`
+    }
+
+    return baseUrl
+  }
+
   private extractQuickModelConfig(config: Record<string, unknown>): QuickModelConfigPayload {
     const agents = asRecord(config.agents)
     const defaults = asRecord(agents.defaults)
@@ -3766,6 +3873,7 @@ export class ManClawManager {
 
       const providerType: QuickModelProvider = isKnownQuickModelProvider(providerId) ? providerId : 'custom-openai'
       const apiKeyPlaceholder = readString(providerConfig.apiKey)
+      const hasManagedApiKeyConfig = providerConfig.apiKey !== undefined && !apiKeyPlaceholder
       const resolvedEnvVarName =
         providerType === 'custom-openai'
           ? apiKeyPlaceholder?.match(/^\$\{(.+)\}$/)?.[1]
@@ -3778,6 +3886,7 @@ export class ManClawManager {
         id: createModelEntryId(providerId, trimmedModelId, entries.length + index),
         provider: providerType,
         modelId: trimmedModelId,
+        apiKeyConfigured: Boolean(apiKeyPlaceholder || hasManagedApiKeyConfig || (resolvedEnvVarName && env[resolvedEnvVarName] !== undefined)),
       }
       if (trimmedConfiguredName && trimmedConfiguredName !== trimmedModelId) {
         entry.name = trimmedConfiguredName
@@ -3849,6 +3958,7 @@ export class ManClawManager {
   private async extractAgentConfig(config: Record<string, unknown>): Promise<AgentConfigDocument> {
     const base = this.extractAgentConfigBase(config)
     const managerConfig = await this.readConfigModel()
+    const openClawAgentsUrl = this.buildOpenClawAgentsUrl(config, managerConfig.service)
     const configuredDefaultWorkspace = base.defaults.workspace.trim()
     const fallbackWorkspace =
       (await this.readWorkspaceForService(managerConfig.service)) ??
@@ -3876,6 +3986,7 @@ export class ManClawManager {
 
     return {
       ...base,
+      openClawAgentsUrl,
       items,
     }
   }
@@ -3885,6 +3996,7 @@ export class ManClawManager {
     const defaults = asRecord(agents.defaults)
     const defaultModel = asRecord(defaults.model)
     const defaultCompaction = asRecord(defaults.compaction)
+    const defaultSubagents = asRecord(defaults.subagents)
     const list = Array.isArray(agents.list) ? agents.list : []
     const bindings = Array.isArray(config.bindings) ? config.bindings : []
     const channelOptions = new Set<string>(Object.keys(asRecord(config.channels)).map((channelId) => channelId.trim()).filter(Boolean))
@@ -3895,6 +4007,7 @@ export class ManClawManager {
       const model = asRecord(agent.model)
       const compaction = asRecord(agent.compaction)
       const tools = asRecord(agent.tools)
+      const subagents = asRecord(agent.subagents)
       const agentBindings = bindings.flatMap((binding, bindingIndex) => {
         const bindingRecord = asRecord(binding)
         if (readString(bindingRecord.agentId) !== agentId) {
@@ -3930,6 +4043,7 @@ export class ManClawManager {
           allow: readStringList(tools.allow),
           deny: readStringList(tools.deny),
         },
+        subagents: readAgentSubagents(subagents),
       }
     })
 
@@ -3951,6 +4065,7 @@ export class ManClawManager {
         workspace: readString(defaults.workspace) ?? '',
         modelPrimary: readString(defaultModel.primary) ?? '',
         compactionMode: readString(defaultCompaction.mode) ?? '',
+        subagents: readAgentSubagents(defaultSubagents),
       },
       availableChannels: Array.from(channelOptions)
         .sort()
@@ -4039,6 +4154,7 @@ export class ManClawManager {
       baseUrl?: string
       customProviderId?: string
       envVarName?: string
+      preserveExistingApiKeyConfig?: boolean
     }
 
     const normalizedEntries: NormalizedQuickModelEntry[] = candidate.entries.map((entry, index) => {
@@ -4050,8 +4166,9 @@ export class ManClawManager {
 
       if (entry.provider === 'custom-openai') {
         const providerId = entry.customProviderId?.trim()
-        const baseUrl = entry.baseUrl?.trim()
-        const envVarName = entry.envVarName?.trim() || defaultEnvVarForProvider('custom-openai')
+        const currentProvider = asRecord(existingProviders[providerId ?? ''])
+        const baseUrl = entry.baseUrl?.trim() || readString(currentProvider.baseUrl)
+        const envVarName = entry.envVarName?.trim()
         const apiKey = entry.apiKey?.trim()
         if (!providerId) {
           throw new Error(`Custom provider ID is required for entry #${index + 1}.`)
@@ -4059,10 +4176,29 @@ export class ManClawManager {
         if (!baseUrl) {
           throw new Error(`Base URL is required for entry #${index + 1}.`)
         }
-        if (!envVarName) {
-          throw new Error(`Environment variable name is required for entry #${index + 1}.`)
+
+        if (apiKey) {
+          if (!envVarName) {
+            throw new Error(`Environment variable name is required for entry #${index + 1}.`)
+          }
+
+          return {
+            ...entry,
+            modelId,
+            name,
+            customProviderId: providerId,
+            baseUrl,
+            envVarName,
+            apiKey,
+            providerKey: providerId,
+          }
         }
-        if (!apiKey) {
+
+        if (envVarName) {
+          throw new Error(`API key is required for entry #${index + 1}.`)
+        }
+
+        if (currentProvider.apiKey === undefined) {
           throw new Error(`API key is required for entry #${index + 1}.`)
         }
 
@@ -4072,19 +4208,31 @@ export class ManClawManager {
           name,
           customProviderId: providerId,
           baseUrl,
-          envVarName,
-          apiKey,
           providerKey: providerId,
+          preserveExistingApiKeyConfig: true,
         }
       }
 
       if (entry.provider !== 'ollama') {
         const envVarName = defaultEnvVarForProvider(entry.provider)
+        const currentProvider = asRecord(existingProviders[entry.provider])
         const apiKey = entry.apiKey?.trim()
         if (!envVarName) {
           throw new Error(`Unsupported provider: ${entry.provider}`)
         }
-        if (!apiKey) {
+
+        if (apiKey) {
+          return {
+            ...entry,
+            modelId,
+            name,
+            envVarName,
+            apiKey,
+            providerKey: entry.provider,
+          }
+        }
+
+        if (currentProvider.apiKey === undefined && env[envVarName] === undefined) {
           throw new Error(`API key is required for entry #${index + 1}.`)
         }
 
@@ -4093,8 +4241,8 @@ export class ManClawManager {
           modelId,
           name,
           envVarName,
-          apiKey,
           providerKey: entry.provider,
+          preserveExistingApiKeyConfig: true,
         }
       }
 
@@ -4124,14 +4272,32 @@ export class ManClawManager {
       const currentProvider: Record<string, unknown> = {
         ...structuredClone(asRecord(existingProviders[providerKey])),
       }
+      const currentProviderModels = Array.isArray(currentProvider.models) ? currentProvider.models : []
+      const existingModelRecords = new Map<string, Record<string, unknown>>()
+      for (const item of currentProviderModels) {
+        const modelRecord = structuredClone(asRecord(item))
+        const existingModelId = readString(modelRecord.id) ?? readString(modelRecord.name)
+        if (existingModelId && !existingModelRecords.has(existingModelId)) {
+          existingModelRecords.set(existingModelId, modelRecord)
+        }
+      }
       const uniqueModels = Array.from(
         new Map(
           providerEntries.map((entry) => [
             entry.modelId,
-            {
-              id: entry.modelId,
-              name: entry.name || entry.modelId,
-            },
+            (() => {
+              const currentModel = existingModelRecords.get(entry.modelId)
+              if (currentModel) {
+                currentModel.id = entry.modelId
+                currentModel.name = entry.name || entry.modelId
+                return currentModel
+              }
+
+              return {
+                id: entry.modelId,
+                name: entry.name || entry.modelId,
+              }
+            })(),
           ]),
         ).values(),
       )
@@ -4139,26 +4305,42 @@ export class ManClawManager {
 
       const firstEntry = providerEntries[0]
       if (firstEntry.provider === 'custom-openai') {
-        const envVarName = firstEntry.envVarName
         const baseUrl = firstEntry.baseUrl
-        const apiKey = firstEntry.apiKey
-        if (!envVarName || !baseUrl || !apiKey) {
+        if (!baseUrl) {
           throw new Error(`Custom provider ${providerKey} is missing required settings.`)
         }
 
         for (const entry of providerEntries) {
-          if (entry.baseUrl !== baseUrl || entry.envVarName !== envVarName || entry.apiKey !== apiKey) {
+          if (
+            entry.baseUrl !== baseUrl ||
+            entry.preserveExistingApiKeyConfig !== firstEntry.preserveExistingApiKeyConfig ||
+            (!entry.preserveExistingApiKeyConfig && (entry.envVarName !== firstEntry.envVarName || entry.apiKey !== firstEntry.apiKey))
+          ) {
             throw new Error(`Custom provider ${providerKey} has inconsistent settings across entries.`)
           }
         }
 
         const existingApi = readString(currentProvider.api)
         currentProvider.baseUrl = baseUrl
-        currentProvider.apiKey = toEnvPlaceholder(envVarName)
         currentProvider.api = existingApi || 'openai-completions'
-        env[envVarName] = apiKey
+        if (firstEntry.preserveExistingApiKeyConfig) {
+          if (currentProvider.apiKey === undefined) {
+            throw new Error(`Custom provider ${providerKey} is missing API key config.`)
+          }
+        } else {
+          const envVarName = firstEntry.envVarName
+          const apiKey = firstEntry.apiKey
+          if (!envVarName || !apiKey) {
+            throw new Error(`Custom provider ${providerKey} is missing required settings.`)
+          }
+
+          currentProvider.apiKey = toEnvPlaceholder(envVarName)
+          env[envVarName] = apiKey
+        }
       } else if (firstEntry.provider !== 'ollama' && firstEntry.envVarName) {
-        env[firstEntry.envVarName] = firstEntry.apiKey
+        if (!firstEntry.preserveExistingApiKeyConfig) {
+          env[firstEntry.envVarName] = firstEntry.apiKey
+        }
       }
 
       nextProviders[providerKey] = currentProvider
@@ -4183,6 +4365,7 @@ export class ManClawManager {
     const defaults = asRecord(agents.defaults)
     const defaultModel = asRecord(defaults.model)
     const defaultCompaction = asRecord(defaults.compaction)
+    const defaultSubagents = asRecord(defaults.subagents)
     const currentList = Array.isArray(agents.list) ? agents.list : []
     const currentDocument = this.extractAgentConfigBase(config)
     const rawBySourceId = new Map<string, Record<string, unknown>>(
@@ -4219,6 +4402,18 @@ export class ManClawManager {
             : [],
       )
 
+      const normalizedSubagents: AgentSubagentsConfig = {
+        modelPrimary: item.subagents?.modelPrimary?.trim() || undefined,
+        thinking: item.subagents?.thinking?.trim() || undefined,
+        maxConcurrent: parseOptionalIntegerField(item.subagents?.maxConcurrent, `Subagents maxConcurrent for agent "${agentId}"`, { min: 1 }),
+        maxSpawnDepth: parseOptionalIntegerField(item.subagents?.maxSpawnDepth, `Subagents maxSpawnDepth for agent "${agentId}"`, { min: 1, max: 5 }),
+        maxChildrenPerAgent: parseOptionalIntegerField(item.subagents?.maxChildrenPerAgent, `Subagents maxChildrenPerAgent for agent "${agentId}"`, { min: 1, max: 20 }),
+        archiveAfterMinutes: parseOptionalIntegerField(item.subagents?.archiveAfterMinutes, `Subagents archiveAfterMinutes for agent "${agentId}"`, { min: 0 }),
+        runTimeoutSeconds: parseOptionalIntegerField(item.subagents?.runTimeoutSeconds, `Subagents runTimeoutSeconds for agent "${agentId}"`, { min: 0 }),
+        announceTimeoutMs: parseOptionalIntegerField(item.subagents?.announceTimeoutMs, `Subagents announceTimeoutMs for agent "${agentId}"`, { min: 1 }),
+        allowAgents: readStringList(item.subagents?.allowAgents),
+      }
+
       seenIds.add(agentId)
       return {
         sourceId: item.sourceId.trim(),
@@ -4230,6 +4425,7 @@ export class ManClawManager {
         toolsProfile,
         toolsAllow: readStringList(item.tools?.allow),
         toolsDeny: readStringList(item.tools?.deny),
+        subagents: normalizedSubagents,
       }
     })
 
@@ -4241,6 +4437,17 @@ export class ManClawManager {
     const defaultModelPrimary = candidate.defaults.modelPrimary.trim()
     if (!defaultModelPrimary) {
       throw new Error('Default model is required.')
+    }
+    const defaultSubagentsCandidate: AgentSubagentsConfig = {
+      modelPrimary: candidate.defaults.subagents.modelPrimary?.trim() || undefined,
+      thinking: candidate.defaults.subagents.thinking?.trim() || undefined,
+      maxConcurrent: parseOptionalIntegerField(candidate.defaults.subagents.maxConcurrent, 'Default subagents maxConcurrent', { min: 1 }),
+      maxSpawnDepth: parseOptionalIntegerField(candidate.defaults.subagents.maxSpawnDepth, 'Default subagents maxSpawnDepth', { min: 1, max: 5 }),
+      maxChildrenPerAgent: parseOptionalIntegerField(candidate.defaults.subagents.maxChildrenPerAgent, 'Default subagents maxChildrenPerAgent', { min: 1, max: 20 }),
+      archiveAfterMinutes: parseOptionalIntegerField(candidate.defaults.subagents.archiveAfterMinutes, 'Default subagents archiveAfterMinutes', { min: 0 }),
+      runTimeoutSeconds: parseOptionalIntegerField(candidate.defaults.subagents.runTimeoutSeconds, 'Default subagents runTimeoutSeconds', { min: 0 }),
+      announceTimeoutMs: parseOptionalIntegerField(candidate.defaults.subagents.announceTimeoutMs, 'Default subagents announceTimeoutMs', { min: 1 }),
+      allowAgents: readStringList(candidate.defaults.subagents.allowAgents),
     }
 
     const orderedItems = [
@@ -4269,11 +4476,92 @@ export class ManClawManager {
       }
     }
 
+    const nextDefaultSubagents = asRecord(defaultSubagents)
+    const nextDefaultSubagentModel = asRecord(nextDefaultSubagents.model)
+    if (defaultSubagentsCandidate.modelPrimary) {
+      nextDefaultSubagentModel.primary = defaultSubagentsCandidate.modelPrimary
+      nextDefaultSubagents.model = nextDefaultSubagentModel
+    } else {
+      delete nextDefaultSubagentModel.primary
+      if (hasOwnKeys(nextDefaultSubagentModel)) {
+        nextDefaultSubagents.model = nextDefaultSubagentModel
+      } else {
+        delete nextDefaultSubagents.model
+      }
+    }
+
+    if (defaultSubagentsCandidate.thinking) {
+      nextDefaultSubagents.thinking = defaultSubagentsCandidate.thinking
+    } else {
+      delete nextDefaultSubagents.thinking
+    }
+
+    if (typeof defaultSubagentsCandidate.maxConcurrent === 'number') {
+      nextDefaultSubagents.maxConcurrent = defaultSubagentsCandidate.maxConcurrent
+    } else {
+      delete nextDefaultSubagents.maxConcurrent
+    }
+
+    if (typeof defaultSubagentsCandidate.maxSpawnDepth === 'number') {
+      nextDefaultSubagents.maxSpawnDepth = defaultSubagentsCandidate.maxSpawnDepth
+    } else {
+      delete nextDefaultSubagents.maxSpawnDepth
+    }
+
+    if (typeof defaultSubagentsCandidate.maxChildrenPerAgent === 'number') {
+      nextDefaultSubagents.maxChildrenPerAgent = defaultSubagentsCandidate.maxChildrenPerAgent
+    } else {
+      delete nextDefaultSubagents.maxChildrenPerAgent
+    }
+
+    if (typeof defaultSubagentsCandidate.archiveAfterMinutes === 'number') {
+      nextDefaultSubagents.archiveAfterMinutes = defaultSubagentsCandidate.archiveAfterMinutes
+    } else {
+      delete nextDefaultSubagents.archiveAfterMinutes
+    }
+
+    if (typeof defaultSubagentsCandidate.runTimeoutSeconds === 'number') {
+      nextDefaultSubagents.runTimeoutSeconds = defaultSubagentsCandidate.runTimeoutSeconds
+    } else {
+      delete nextDefaultSubagents.runTimeoutSeconds
+    }
+
+    if (typeof defaultSubagentsCandidate.announceTimeoutMs === 'number') {
+      nextDefaultSubagents.announceTimeoutMs = defaultSubagentsCandidate.announceTimeoutMs
+    } else {
+      delete nextDefaultSubagents.announceTimeoutMs
+    }
+
+    if (defaultSubagentsCandidate.allowAgents.length > 0) {
+      nextDefaultSubagents.allowAgents = defaultSubagentsCandidate.allowAgents
+    } else {
+      delete nextDefaultSubagents.allowAgents
+    }
+
+    if (hasOwnKeys(nextDefaultSubagents)) {
+      defaults.subagents = nextDefaultSubagents
+    } else {
+      delete defaults.subagents
+    }
+
+    const existingBindings = Array.isArray(nextConfig.bindings) ? nextConfig.bindings : []
+    const rawAgentBindingsById = new Map<string, Record<string, unknown>>()
+    existingBindings.forEach((binding, bindingIndex) => {
+      const bindingRecord = asRecord(binding)
+      const agentId = readString(bindingRecord.agentId)
+      if (!agentId) {
+        return
+      }
+      rawAgentBindingsById.set(createAgentBindingId(agentId, bindingIndex), structuredClone(bindingRecord))
+    })
+
     agents.list = orderedItems.map((item) => {
       const nextAgent = structuredClone(rawBySourceId.get(item.sourceId) ?? rawById.get(item.sourceId) ?? rawById.get(item.id) ?? {})
       const nextModel = asRecord(nextAgent.model)
       const nextCompaction = asRecord(nextAgent.compaction)
       const nextTools = asRecord(nextAgent.tools)
+      const nextSubagents = asRecord(nextAgent.subagents)
+      const nextSubagentModel = asRecord(nextSubagents.model)
 
       nextAgent.id = item.id
       delete nextAgent.enabled
@@ -4332,11 +4620,76 @@ export class ManClawManager {
         delete nextAgent.tools
       }
 
+      if (item.subagents.modelPrimary) {
+        nextSubagentModel.primary = item.subagents.modelPrimary
+        nextSubagents.model = nextSubagentModel
+      } else {
+        delete nextSubagentModel.primary
+        if (hasOwnKeys(nextSubagentModel)) {
+          nextSubagents.model = nextSubagentModel
+        } else {
+          delete nextSubagents.model
+        }
+      }
+
+      if (item.subagents.thinking) {
+        nextSubagents.thinking = item.subagents.thinking
+      } else {
+        delete nextSubagents.thinking
+      }
+
+      if (typeof item.subagents.maxConcurrent === 'number') {
+        nextSubagents.maxConcurrent = item.subagents.maxConcurrent
+      } else {
+        delete nextSubagents.maxConcurrent
+      }
+
+      if (typeof item.subagents.maxSpawnDepth === 'number') {
+        nextSubagents.maxSpawnDepth = item.subagents.maxSpawnDepth
+      } else {
+        delete nextSubagents.maxSpawnDepth
+      }
+
+      if (typeof item.subagents.maxChildrenPerAgent === 'number') {
+        nextSubagents.maxChildrenPerAgent = item.subagents.maxChildrenPerAgent
+      } else {
+        delete nextSubagents.maxChildrenPerAgent
+      }
+
+      if (typeof item.subagents.archiveAfterMinutes === 'number') {
+        nextSubagents.archiveAfterMinutes = item.subagents.archiveAfterMinutes
+      } else {
+        delete nextSubagents.archiveAfterMinutes
+      }
+
+      if (typeof item.subagents.runTimeoutSeconds === 'number') {
+        nextSubagents.runTimeoutSeconds = item.subagents.runTimeoutSeconds
+      } else {
+        delete nextSubagents.runTimeoutSeconds
+      }
+
+      if (typeof item.subagents.announceTimeoutMs === 'number') {
+        nextSubagents.announceTimeoutMs = item.subagents.announceTimeoutMs
+      } else {
+        delete nextSubagents.announceTimeoutMs
+      }
+
+      if (item.subagents.allowAgents.length > 0) {
+        nextSubagents.allowAgents = item.subagents.allowAgents
+      } else {
+        delete nextSubagents.allowAgents
+      }
+
+      if (hasOwnKeys(nextSubagents)) {
+        nextAgent.subagents = nextSubagents
+      } else {
+        delete nextAgent.subagents
+      }
+
       return nextAgent
     })
 
     const managedAgentIds = new Set(currentDocument.items.map((item) => item.id))
-    const existingBindings = Array.isArray(nextConfig.bindings) ? nextConfig.bindings : []
     const preservedBindings = existingBindings.filter((binding) => {
       const bindingRecord = asRecord(binding)
       const agentId = readString(bindingRecord.agentId)
@@ -4347,13 +4700,19 @@ export class ManClawManager {
     nextConfig.bindings = [
       ...preservedBindings,
       ...orderedItems.flatMap((item) =>
-        item.bindings.map((binding) => ({
-          agentId: item.id,
-          match: {
-            channel: binding.channel,
-            ...(binding.accountId ? { accountId: binding.accountId } : {}),
-          },
-        })),
+        item.bindings.map((binding) => {
+          const nextBinding = structuredClone(rawAgentBindingsById.get(binding.id) ?? {})
+          const nextMatch = asRecord(nextBinding.match)
+          nextBinding.agentId = item.id
+          nextMatch.channel = binding.channel
+          if (binding.accountId) {
+            nextMatch.accountId = binding.accountId
+          } else {
+            delete nextMatch.accountId
+          }
+          nextBinding.match = nextMatch
+          return nextBinding
+        }),
       ),
     ]
 
@@ -4518,6 +4877,15 @@ export class ManClawManager {
     }, {})
 
     const existingBindings = Array.isArray(nextConfig.bindings) ? nextConfig.bindings : []
+    const rawChannelBindingsById = new Map<string, Record<string, unknown>>()
+    existingBindings.forEach((binding, bindingIndex) => {
+      const bindingRecord = asRecord(binding)
+      const channelId = readString(asRecord(bindingRecord.match).channel)
+      if (!channelId) {
+        return
+      }
+      rawChannelBindingsById.set(createChannelBindingId(channelId, bindingIndex), structuredClone(bindingRecord))
+    })
     const managedChannelIds = new Set(currentDocument.items.map((item) => item.id))
     const preservedBindings = existingBindings.filter((binding) => {
       const bindingRecord = asRecord(binding)
@@ -4529,13 +4897,19 @@ export class ManClawManager {
     nextConfig.bindings = [
       ...preservedBindings,
       ...normalizedItems.flatMap((item) =>
-        item.bindings.map((binding) => ({
-          agentId: binding.agentId,
-          match: {
-            channel: item.id,
-            ...(binding.accountId ? { accountId: binding.accountId } : {}),
-          },
-        })),
+        item.bindings.map((binding) => {
+          const nextBinding = structuredClone(rawChannelBindingsById.get(binding.id) ?? {})
+          const nextMatch = asRecord(nextBinding.match)
+          nextBinding.agentId = binding.agentId
+          nextMatch.channel = item.id
+          if (binding.accountId) {
+            nextMatch.accountId = binding.accountId
+          } else {
+            delete nextMatch.accountId
+          }
+          nextBinding.match = nextMatch
+          return nextBinding
+        }),
       ),
     ]
 

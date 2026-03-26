@@ -35,7 +35,8 @@
 
 - 已新增独立 Agents 页面路由入口
 - 已支持读取和保存真实 `openclaw.json` 中的 `agents` / `bindings`
-- 已支持维护默认 Agent、每个 Agent 的模型、workspace、compaction 和 channel 绑定
+- 已支持维护默认 Agent、每个 Agent 的模型、workspace、compaction、subagents 和 channel 绑定
+- 已补充默认层 `subagents.allowAgents` 的结构化编辑，并收紧保存覆盖范围，尽量保留 `subagents` 与 `bindings` 上未暴露字段
 - 已支持新增、复制、删除和启用/停用 Agent 条目
 
 - 独立 Agents 页面
@@ -59,6 +60,7 @@
 - 已新增独立 Channels 页面路由入口
 - 已支持结构化读取和保存真实 `openclaw.json` 中的 `channels`
 - 已支持按 channel 维护到 Agent 的绑定规则，并联动写回 `bindings[*].match`
+- 已收紧 Channels 保存覆盖范围，受管 binding 仅更新 `agentId` / `match.channel` / `accountId`，尽量保留其他字段
 - 渠道实例的详细 schema 当前仍按原始 JSON 对象编辑，尚未细分不同类型的专用表单
 
 - 独立 Channels 页面或并入 Agents/Integrations 体系

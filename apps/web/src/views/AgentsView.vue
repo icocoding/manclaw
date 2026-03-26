@@ -65,6 +65,80 @@
           </label>
         </div>
 
+        <div class="agent-tools">
+          <div class="section-header">
+            <div>
+              <p class="panel__label">Subagents 默认值</p>
+              <h3>共享子智能体参数</h3>
+            </div>
+            <p class="panel__muted">写入 `agents.defaults.subagents`。留空时表示继承 OpenClaw 默认行为。</p>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span class="field__label">Subagent 默认模型</span>
+              <n-select
+                :value="defaults.subagents.modelPrimary || null"
+                class="field-control"
+                clearable
+                filterable
+                :options="modelOptions"
+                placeholder="留空则继承调用者"
+                @update:value="(value) => { defaults.subagents.modelPrimary = String(value ?? '') }"
+              />
+            </label>
+
+          <label class="field">
+            <span class="field__label">Thinking</span>
+            <n-input v-model:value="defaults.subagents.thinking" class="field-control" placeholder="例如 low / medium / high" />
+          </label>
+
+          <label class="field">
+            <span class="field__label">Allow Agents</span>
+            <n-select
+              :value="defaults.subagents.allowAgents"
+              class="field-control"
+              multiple
+              filterable
+              clearable
+              :options="defaultSubagentAllowAgentOptions"
+              placeholder="留空则不限制"
+              @update:value="(value) => { defaults.subagents.allowAgents = Array.isArray(value) ? (value as string[]) : [] }"
+            />
+          </label>
+
+          <label class="field">
+            <span class="field__label">Max Concurrent</span>
+            <n-input v-model:value="defaults.subagents.maxConcurrentText" class="field-control" placeholder="例如 8" />
+            </label>
+
+            <label class="field">
+              <span class="field__label">Max Spawn Depth</span>
+              <n-input v-model:value="defaults.subagents.maxSpawnDepthText" class="field-control" placeholder="1-5，默认 1" />
+            </label>
+
+            <label class="field">
+              <span class="field__label">Max Children Per Agent</span>
+              <n-input v-model:value="defaults.subagents.maxChildrenPerAgentText" class="field-control" placeholder="例如 5" />
+            </label>
+
+            <label class="field">
+              <span class="field__label">Archive After Minutes</span>
+              <n-input v-model:value="defaults.subagents.archiveAfterMinutesText" class="field-control" placeholder="0 表示禁用自动归档" />
+            </label>
+
+            <label class="field">
+              <span class="field__label">Run Timeout Seconds</span>
+              <n-input v-model:value="defaults.subagents.runTimeoutSecondsText" class="field-control" placeholder="0 表示不超时" />
+            </label>
+
+            <label class="field">
+              <span class="field__label">Announce Timeout Ms</span>
+              <n-input v-model:value="defaults.subagents.announceTimeoutMsText" class="field-control" placeholder="例如 90000" />
+            </label>
+          </div>
+        </div>
+
         <div class="button-row">
           <n-button type="primary" :disabled="busy.save || !hasPendingChanges" @click="saveAgents">
             {{ busy.save ? '保存中...' : hasPendingChanges ? '保存 Agent 变更' : '保存 Agent 配置' }}
@@ -116,6 +190,9 @@
                 </div>
 
                 <div class="button-row">
+                  <n-button tertiary size="small" :disabled="!openClawAgentsUrl" @click="openAgentSkillsEditor">
+                    转到 OpenClaw Agents 管理
+                  </n-button>
                   <n-button tertiary size="small" :disabled="busy.save" @click="copyAgent(agent)">复制</n-button>
                   <n-button tertiary size="small" :disabled="busy.save || agents.length === 1" @click="removeAgent(index)">删除</n-button>
                 </div>
@@ -164,7 +241,7 @@
                     <p class="panel__label">绑定规则</p>
                     <h3>按 Agent 维护 channel 绑定</h3>
                   </div>
-                  <p class="panel__muted">保存时会直接写回 `bindings[*].match`。可用 `accountId` 做更细的 Feishu 路由。</p>
+                  <p class="panel__muted">保存时会更新受管 binding 的 `agentId`、`match.channel` 和可选 `accountId`，其余未暴露字段尽量保留。可用 `accountId` 做更细的 Feishu 路由。</p>
                 </div>
 
                 <div v-if="agent.bindings.length" class="agent-binding-list">
@@ -211,6 +288,80 @@
                   <label class="field field--span-2">
                     <span class="field__label">Deny</span>
                     <n-input v-model:value="agent.toolsDenyText" class="field-control" placeholder="browser, exec" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="agent-tools">
+                <div class="section-header">
+                  <div>
+                    <p class="panel__label">Subagents</p>
+                    <h3>按 Agent 覆盖子智能体参数</h3>
+                  </div>
+                  <p class="panel__muted">写入 `agents.list[].subagents`。当前支持 `model / thinking / allowAgents` 以及常用并发、深度、超时参数。</p>
+                </div>
+
+                <div class="form-grid">
+                  <label class="field">
+                    <span class="field__label">Subagent 模型</span>
+                    <n-select
+                      :value="agent.subagentsModelPrimary || null"
+                      class="field-control"
+                      clearable
+                      filterable
+                      :options="modelOptions"
+                      placeholder="留空则继承默认值"
+                      @update:value="(value) => { agent.subagentsModelPrimary = String(value ?? '') }"
+                    />
+                  </label>
+
+                  <label class="field">
+                    <span class="field__label">Thinking</span>
+                    <n-input v-model:value="agent.subagentsThinking" class="field-control" placeholder="留空则继承默认值" />
+                  </label>
+
+                  <label class="field field--span-2">
+                    <span class="field__label">Allow Agents</span>
+                    <n-select
+                      :value="agent.subagentsAllowAgents"
+                      class="field-control"
+                      multiple
+                      filterable
+                      clearable
+                      :options="subagentAllowAgentOptions(agent)"
+                      placeholder="选择允许调用的 Agent"
+                      @update:value="(value) => { agent.subagentsAllowAgents = Array.isArray(value) ? (value as string[]) : [] }"
+                    />
+                  </label>
+
+                  <label class="field">
+                    <span class="field__label">Max Concurrent</span>
+                    <n-input v-model:value="agent.subagentsMaxConcurrentText" class="field-control" placeholder="留空则继承默认值" />
+                  </label>
+
+                  <label class="field">
+                    <span class="field__label">Max Spawn Depth</span>
+                    <n-input v-model:value="agent.subagentsMaxSpawnDepthText" class="field-control" placeholder="1-5" />
+                  </label>
+
+                  <label class="field">
+                    <span class="field__label">Max Children Per Agent</span>
+                    <n-input v-model:value="agent.subagentsMaxChildrenPerAgentText" class="field-control" placeholder="留空则继承默认值" />
+                  </label>
+
+                  <label class="field">
+                    <span class="field__label">Archive After Minutes</span>
+                    <n-input v-model:value="agent.subagentsArchiveAfterMinutesText" class="field-control" placeholder="0 表示禁用自动归档" />
+                  </label>
+
+                  <label class="field">
+                    <span class="field__label">Run Timeout Seconds</span>
+                    <n-input v-model:value="agent.subagentsRunTimeoutSecondsText" class="field-control" placeholder="0 表示不超时" />
+                  </label>
+
+                  <label class="field">
+                    <span class="field__label">Announce Timeout Ms</span>
+                    <n-input v-model:value="agent.subagentsAnnounceTimeoutMsText" class="field-control" placeholder="例如 90000" />
                   </label>
                 </div>
               </div>
@@ -326,6 +477,15 @@ interface EditableAgent extends AgentConfigEntry {
   toolsProfile: string
   toolsAllowText: string
   toolsDenyText: string
+  subagentsModelPrimary: string
+  subagentsThinking: string
+  subagentsAllowAgents: string[]
+  subagentsMaxConcurrentText: string
+  subagentsMaxSpawnDepthText: string
+  subagentsMaxChildrenPerAgentText: string
+  subagentsArchiveAfterMinutesText: string
+  subagentsRunTimeoutSecondsText: string
+  subagentsAnnounceTimeoutMsText: string
   sessionMessage: string
   sessionMessageIsError: boolean
 }
@@ -333,6 +493,7 @@ interface EditableAgent extends AgentConfigEntry {
 const agents = ref<EditableAgent[]>([])
 const configContent = ref('')
 const availableChannels = ref<AgentConfigDocument['availableChannels']>([])
+const openClawAgentsUrl = ref('')
 const modelOptions = ref<Array<{ label: string; value: string }>>([])
 const defaultAgentId = ref('')
 const lastSavedSnapshot = ref('')
@@ -340,6 +501,17 @@ const defaults = reactive({
   workspace: '',
   modelPrimary: '',
   compactionMode: '',
+  subagents: {
+    modelPrimary: '',
+    thinking: '',
+    allowAgents: [] as string[],
+    maxConcurrentText: '',
+    maxSpawnDepthText: '',
+    maxChildrenPerAgentText: '',
+    archiveAfterMinutesText: '',
+    runTimeoutSecondsText: '',
+    announceTimeoutMsText: '',
+  },
 })
 const message = ref('在这里维护多个 Agent、默认角色和渠道绑定。')
 const busy = reactive({
@@ -379,6 +551,21 @@ const defaultAgentOptions = computed(() =>
     })
     .filter((item): item is { label: string; value: string } => item !== null),
 )
+const defaultSubagentAllowAgentOptions = computed(() =>
+  agents.value
+    .map((agent, index) => {
+      const agentId = agent.id.trim()
+      if (!agentId) {
+        return null
+      }
+
+      return {
+        label: agentId || `Agent #${index + 1}`,
+        value: agentId,
+      }
+    })
+    .filter((item): item is { label: string; value: string } => item !== null),
+)
 
 const totalBindingCount = computed(() => agents.value.reduce((sum, agent) => sum + normalizeBindings(agent.bindings).length, 0))
 const availableChannelSummary = computed(() => (availableChannels.value.length > 0 ? availableChannels.value.map((item) => item.label).join(', ') : '--'))
@@ -411,6 +598,16 @@ function parseChannels(value: string): string[] {
         .filter(Boolean),
     ),
   )
+}
+
+function parseOptionalIntegerText(value: string): number | undefined {
+  const normalized = value.trim()
+  if (!normalized) {
+    return undefined
+  }
+
+  const parsed = Number(normalized)
+  return Number.isInteger(parsed) ? parsed : undefined
 }
 
 function createEditableBinding(partial?: Partial<AgentBindingEntry>): AgentBindingEntry {
@@ -460,6 +657,16 @@ function createEditableAgent(partial?: Partial<EditableAgent>): EditableAgent {
     toolsProfile: partial?.toolsProfile ?? partial?.tools?.profile ?? '',
     toolsAllowText: partial?.toolsAllowText ?? partial?.tools?.allow?.join(', ') ?? '',
     toolsDenyText: partial?.toolsDenyText ?? partial?.tools?.deny?.join(', ') ?? '',
+    subagents: partial?.subagents ?? { allowAgents: [] },
+    subagentsModelPrimary: partial?.subagentsModelPrimary ?? partial?.subagents?.modelPrimary ?? '',
+    subagentsThinking: partial?.subagentsThinking ?? partial?.subagents?.thinking ?? '',
+    subagentsAllowAgents: partial?.subagentsAllowAgents ?? partial?.subagents?.allowAgents ?? [],
+    subagentsMaxConcurrentText: partial?.subagentsMaxConcurrentText ?? String(partial?.subagents?.maxConcurrent ?? ''),
+    subagentsMaxSpawnDepthText: partial?.subagentsMaxSpawnDepthText ?? String(partial?.subagents?.maxSpawnDepth ?? ''),
+    subagentsMaxChildrenPerAgentText: partial?.subagentsMaxChildrenPerAgentText ?? String(partial?.subagents?.maxChildrenPerAgent ?? ''),
+    subagentsArchiveAfterMinutesText: partial?.subagentsArchiveAfterMinutesText ?? String(partial?.subagents?.archiveAfterMinutes ?? ''),
+    subagentsRunTimeoutSecondsText: partial?.subagentsRunTimeoutSecondsText ?? String(partial?.subagents?.runTimeoutSeconds ?? ''),
+    subagentsAnnounceTimeoutMsText: partial?.subagentsAnnounceTimeoutMsText ?? String(partial?.subagents?.announceTimeoutMs ?? ''),
     resolvedWorkspace: partial?.resolvedWorkspace,
     skillsDir: partial?.skillsDir,
     disabledSkillsDir: partial?.disabledSkillsDir,
@@ -488,13 +695,40 @@ function nextAvailableAgentId(baseId: string): string {
   return `${normalizedBase}-${suffix}`
 }
 
+function subagentAllowAgentOptions(currentAgent: EditableAgent): Array<{ label: string; value: string }> {
+  return agents.value
+    .map((agent, index) => {
+      const agentId = agent.id.trim()
+      if (!agentId || agentId === currentAgent.id.trim()) {
+        return null
+      }
+
+      return {
+        label: agentId || `Agent #${index + 1}`,
+        value: agentId,
+      }
+    })
+    .filter((item): item is { label: string; value: string } => item !== null)
+}
+
 function buildAgentPayload(): {
   defaultAgentId: string
   defaults: {
     workspace: string
-    modelPrimary: string
-    compactionMode: string
-  }
+      modelPrimary: string
+      compactionMode: string
+      subagents: {
+        modelPrimary?: string
+        thinking?: string
+        maxConcurrent?: number
+        maxSpawnDepth?: number
+        maxChildrenPerAgent?: number
+        archiveAfterMinutes?: number
+        runTimeoutSeconds?: number
+        announceTimeoutMs?: number
+        allowAgents: string[]
+      }
+    }
   items: Array<{
     sourceId: string
     id: string
@@ -505,13 +739,24 @@ function buildAgentPayload(): {
     }>
     workspace?: string
     modelPrimary?: string
-    compactionMode?: string
-    tools: {
-      profile?: string
-      allow: string[]
-      deny: string[]
-    }
-  }>
+      compactionMode?: string
+      tools: {
+        profile?: string
+        allow: string[]
+        deny: string[]
+      }
+      subagents: {
+        modelPrimary?: string
+        thinking?: string
+        maxConcurrent?: number
+        maxSpawnDepth?: number
+        maxChildrenPerAgent?: number
+        archiveAfterMinutes?: number
+        runTimeoutSeconds?: number
+        announceTimeoutMs?: number
+        allowAgents: string[]
+      }
+    }>
 } {
   return {
     defaultAgentId: defaultAgentId.value.trim(),
@@ -519,6 +764,17 @@ function buildAgentPayload(): {
       workspace: defaults.workspace.trim(),
       modelPrimary: defaults.modelPrimary.trim(),
       compactionMode: defaults.compactionMode.trim(),
+      subagents: {
+        modelPrimary: defaults.subagents.modelPrimary.trim() || undefined,
+        thinking: defaults.subagents.thinking.trim() || undefined,
+        maxConcurrent: parseOptionalIntegerText(defaults.subagents.maxConcurrentText),
+        maxSpawnDepth: parseOptionalIntegerText(defaults.subagents.maxSpawnDepthText),
+        maxChildrenPerAgent: parseOptionalIntegerText(defaults.subagents.maxChildrenPerAgentText),
+        archiveAfterMinutes: parseOptionalIntegerText(defaults.subagents.archiveAfterMinutesText),
+        runTimeoutSeconds: parseOptionalIntegerText(defaults.subagents.runTimeoutSecondsText),
+        announceTimeoutMs: parseOptionalIntegerText(defaults.subagents.announceTimeoutMsText),
+        allowAgents: Array.from(new Set(defaults.subagents.allowAgents.map((item) => item.trim()).filter(Boolean))),
+      },
     },
     items: agents.value.map((agent) => ({
       sourceId: agent.sourceId,
@@ -536,15 +792,36 @@ function buildAgentPayload(): {
         allow: parseChannels(agent.toolsAllowText),
         deny: parseChannels(agent.toolsDenyText),
       },
+      subagents: {
+        modelPrimary: agent.subagentsModelPrimary.trim() || undefined,
+        thinking: agent.subagentsThinking.trim() || undefined,
+        maxConcurrent: parseOptionalIntegerText(agent.subagentsMaxConcurrentText),
+        maxSpawnDepth: parseOptionalIntegerText(agent.subagentsMaxSpawnDepthText),
+        maxChildrenPerAgent: parseOptionalIntegerText(agent.subagentsMaxChildrenPerAgentText),
+        archiveAfterMinutes: parseOptionalIntegerText(agent.subagentsArchiveAfterMinutesText),
+        runTimeoutSeconds: parseOptionalIntegerText(agent.subagentsRunTimeoutSecondsText),
+        announceTimeoutMs: parseOptionalIntegerText(agent.subagentsAnnounceTimeoutMsText),
+        allowAgents: Array.from(new Set(agent.subagentsAllowAgents.map((item) => item.trim()).filter(Boolean))),
+      },
     })),
   }
 }
 
 function applyDocument(document: AgentConfigDocument): void {
   availableChannels.value = document.availableChannels
+  openClawAgentsUrl.value = document.openClawAgentsUrl?.trim() ?? ''
   defaults.workspace = document.defaults.workspace
   defaults.modelPrimary = document.defaults.modelPrimary
   defaults.compactionMode = document.defaults.compactionMode
+  defaults.subagents.modelPrimary = document.defaults.subagents.modelPrimary ?? ''
+  defaults.subagents.thinking = document.defaults.subagents.thinking ?? ''
+  defaults.subagents.allowAgents = document.defaults.subagents.allowAgents ?? []
+  defaults.subagents.maxConcurrentText = String(document.defaults.subagents.maxConcurrent ?? '')
+  defaults.subagents.maxSpawnDepthText = String(document.defaults.subagents.maxSpawnDepth ?? '')
+  defaults.subagents.maxChildrenPerAgentText = String(document.defaults.subagents.maxChildrenPerAgent ?? '')
+  defaults.subagents.archiveAfterMinutesText = String(document.defaults.subagents.archiveAfterMinutes ?? '')
+  defaults.subagents.runTimeoutSecondsText = String(document.defaults.subagents.runTimeoutSeconds ?? '')
+  defaults.subagents.announceTimeoutMsText = String(document.defaults.subagents.announceTimeoutMs ?? '')
   agents.value = document.items.map((item) =>
     createEditableAgent({
       ...item,
@@ -555,6 +832,16 @@ function applyDocument(document: AgentConfigDocument): void {
       toolsProfile: item.tools?.profile ?? '',
       toolsAllowText: item.tools?.allow?.join(', ') ?? '',
       toolsDenyText: item.tools?.deny?.join(', ') ?? '',
+      subagents: item.subagents ?? { allowAgents: [] },
+      subagentsModelPrimary: item.subagents?.modelPrimary ?? '',
+      subagentsThinking: item.subagents?.thinking ?? '',
+      subagentsAllowAgents: item.subagents?.allowAgents ?? [],
+      subagentsMaxConcurrentText: String(item.subagents?.maxConcurrent ?? ''),
+      subagentsMaxSpawnDepthText: String(item.subagents?.maxSpawnDepth ?? ''),
+      subagentsMaxChildrenPerAgentText: String(item.subagents?.maxChildrenPerAgent ?? ''),
+      subagentsArchiveAfterMinutesText: String(item.subagents?.archiveAfterMinutes ?? ''),
+      subagentsRunTimeoutSecondsText: String(item.subagents?.runTimeoutSeconds ?? ''),
+      subagentsAnnounceTimeoutMsText: String(item.subagents?.announceTimeoutMs ?? ''),
       bindings: item.bindings.map((binding) => createEditableBinding(binding)),
       resolvedWorkspace: item.resolvedWorkspace,
       skillsDir: item.skillsDir,
@@ -567,6 +854,17 @@ function applyDocument(document: AgentConfigDocument): void {
   )
   defaultAgentId.value = document.defaultAgentId || document.items[0]?.id || ''
   lastSavedSnapshot.value = JSON.stringify(buildAgentPayload())
+}
+
+function openAgentSkillsEditor(): void {
+  const targetUrl = openClawAgentsUrl.value.trim()
+  if (!targetUrl) {
+    updateMessage('当前没有可用的 OpenClaw Agents 页面地址。')
+    return
+  }
+
+  window.open(targetUrl, '_blank', 'noopener,noreferrer')
+  updateMessage('已打开 OpenClaw Agents 页面，可继续维护 Agent 技能。')
 }
 
 async function refreshAll(): Promise<void> {
