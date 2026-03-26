@@ -89,6 +89,27 @@ VITE_API_PROXY_TARGET=http://127.0.0.1:18300
 - Web UI: `http://localhost:5173`
 - Server API: `http://localhost:18300`
 
+## 远程访问鉴权
+
+当 `manclaw` 通过 `127.0.0.1` / `localhost` 之外的地址访问时，服务端会要求 token 验证。
+
+- token 优先读取环境变量 `MANCLAW_ACCESS_TOKEN`
+- 如果没有配置该环境变量，则回退复用当前 `openclaw.json` 中的 `gateway.auth.token`（要求 `gateway.auth.mode = token`）
+- 浏览器可通过 `#token=...` 或 `?token=...` 直接打开页面，首次验证成功后服务端会建立访问会话
+- 直接请求 API 时，也可以通过 `Authorization: Bearer <token>` 或 `x-manclaw-token: <token>` 传递 token
+
+示例：
+
+```bash
+MANCLAW_ACCESS_TOKEN=change-me HOST=0.0.0.0 pnpm preview
+```
+
+然后可以使用：
+
+```txt
+http://<your-ip>:18300/#token=change-me
+```
+
 ## 1.0 发布方式
 
 `manclaw` 现在支持单进程发布，不需要额外的 `Nginx`。生产模式下由 `Fastify` 直接托管前端构建产物。

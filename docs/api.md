@@ -8,6 +8,44 @@
 - 健康检查：`/health`
 - 返回格式：除 `/health` 外，其余接口统一返回 `ApiResponse<T>`
 
+## 访问鉴权
+
+当浏览器或客户端通过 `127.0.0.1` / `localhost` 之外的地址访问 `manclaw` 时，服务端会启用 token 校验。
+
+- token 来源优先级：
+  - `MANCLAW_ACCESS_TOKEN`
+  - 当前 `openclaw.json -> gateway.auth.token`（要求 `gateway.auth.mode = token`）
+- 放行方式：
+  - `Authorization: Bearer <token>`
+  - `x-manclaw-token: <token>`
+  - `?token=<token>`
+  - 已建立的会话 cookie
+- 对于远程访问，如果服务端没有可用 token，则 `/health`、`/api/*` 和 Web UI 都会拒绝访问
+
+### `POST /auth/session`
+
+为远程 Web UI 建立访问会话。
+
+请求：
+
+```json
+{
+  "token": "change-me"
+}
+```
+
+成功响应：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "authenticated": true,
+    "tokenSource": "env"
+  }
+}
+```
+
 成功示例：
 
 ```json
@@ -34,6 +72,11 @@
 ### `GET /health`
 
 返回服务存活状态和健康快照。
+
+补充说明：
+
+- 本机通过 `127.0.0.1` / `localhost` 访问时，无需 token
+- 远程地址访问时，需要先通过上面的 token 校验
 
 ### `GET /api/system/summary`
 

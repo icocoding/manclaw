@@ -1,6 +1,7 @@
 import fastifyStatic from '@fastify/static'
 import cors from '@fastify/cors'
 import Fastify from 'fastify'
+import { timingSafeEqual } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import path from 'node:path'
@@ -34,6 +35,11 @@ const QUIET_LOG_PATHS = new Set([
   '/api/shell/allowed-commands',
 ])
 
+const ACCESS_TOKEN_COOKIE_NAME = 'manclaw_access_token'
+const ACCESS_TOKEN_CACHE_TTL_MS = 5_000
+const ACCESS_AUTH_EXEMPT_PATHS = new Set(['/auth/session'])
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
+
 const app = Fastify({
   logger: {
     level: process.env.LOG_LEVEL ?? 'info',
@@ -55,8 +61,363 @@ const webDistCandidates = [
 const manager = createManager(process.cwd())
 await manager.initialize()
 
+let cachedAccessToken:
+  | {
+      value?: string
+      source: 'env' | 'openclaw' | 'none'
+      cachedAt: number
+    }
+  | undefined
+
+function normalizeHostname(hostname: string): string {
+  return hostname.trim().toLowerCase()
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return LOOPBACK_HOSTNAMES.has(normalizeHostname(hostname))
+}
+
+function parseCookieHeader(cookieHeader: string | undefined): Record<string, string> {
+  if (!cookieHeader?.trim()) {
+    return {}
+  }
+
+  return cookieHeader
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((result, item) => {
+      const separatorIndex = item.indexOf('=')
+      if (separatorIndex <= 0) {
+        return result
+      }
+
+      const key = item.slice(0, separatorIndex).trim()
+      const value = item.slice(separatorIndex + 1).trim()
+      if (!key) {
+        return result
+      }
+
+      result[key] = decodeURIComponent(value)
+      return result
+    }, {})
+}
+
+function serializeAccessTokenCookie(token: string, secure: boolean): string {
+  const segments = [
+    `${ACCESS_TOKEN_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${60 * 60 * 24 * 30}`,
+  ]
+
+  if (secure) {
+    segments.push('Secure')
+  }
+
+  return segments.join('; ')
+}
+
+function extractQueryToken(requestUrl: string): string | undefined {
+  const url = new URL(requestUrl, 'http://127.0.0.1')
+  const token = url.searchParams.get('token')?.trim()
+  return token || undefined
+}
+
+function stripQueryToken(requestUrl: string): string {
+  const url = new URL(requestUrl, 'http://127.0.0.1')
+  url.searchParams.delete('token')
+  return `${url.pathname}${url.search}`
+}
+
+function extractBearerToken(authorization: string | undefined): string | undefined {
+  if (!authorization?.trim()) {
+    return undefined
+  }
+
+  const match = authorization.match(/^Bearer\s+(.+)$/i)
+  return match?.[1]?.trim() || undefined
+}
+
+function isValidAccessToken(candidate: string | undefined, expected: string | undefined): boolean {
+  if (!candidate || !expected) {
+    return false
+  }
+
+  const candidateBuffer = Buffer.from(candidate)
+  const expectedBuffer = Buffer.from(expected)
+  return candidateBuffer.length === expectedBuffer.length && timingSafeEqual(candidateBuffer, expectedBuffer)
+}
+
+async function resolveAccessToken(): Promise<{ value?: string; source: 'env' | 'openclaw' | 'none' }> {
+  const now = Date.now()
+  if (cachedAccessToken && now - cachedAccessToken.cachedAt < ACCESS_TOKEN_CACHE_TTL_MS) {
+    return cachedAccessToken
+  }
+
+  const envToken = process.env.MANCLAW_ACCESS_TOKEN?.trim()
+  if (envToken) {
+    cachedAccessToken = {
+      value: envToken,
+      source: 'env',
+      cachedAt: now,
+    }
+    return cachedAccessToken
+  }
+
+  try {
+    const currentConfig = await manager.getCurrentConfig()
+    const parsed = JSON.parse(currentConfig.content) as { gateway?: { auth?: { mode?: string; token?: string } } }
+    const authMode = parsed.gateway?.auth?.mode?.trim()
+    const authToken = parsed.gateway?.auth?.token?.trim()
+
+    if (authMode === 'token' && authToken) {
+      cachedAccessToken = {
+        value: authToken,
+        source: 'openclaw',
+        cachedAt: now,
+      }
+      return cachedAccessToken
+    }
+  } catch (error) {
+    app.log.warn({ err: error }, 'failed to resolve access token from current openclaw config')
+  }
+
+  cachedAccessToken = {
+    value: undefined,
+    source: 'none',
+    cachedAt: now,
+  }
+  return cachedAccessToken
+}
+
+function renderAccessGatePage(options: { requestPath: string; tokenConfigured: boolean; tokenSource: 'env' | 'openclaw' | 'none' }): string {
+  const title = options.tokenConfigured ? 'ManClaw Access Token Required' : 'ManClaw Remote Access Disabled'
+  const message = options.tokenConfigured
+    ? '当前访问地址不是 127.0.0.1 / localhost，需要先输入 token 才能继续。'
+    : '当前访问地址不是 127.0.0.1 / localhost，但服务端还没有可用 token。请先配置 MANCLAW_ACCESS_TOKEN，或在 openclaw.json 中启用 gateway.auth.token。'
+  const sourceText = options.tokenConfigured
+    ? options.tokenSource === 'env'
+      ? '当前使用 MANCLAW_ACCESS_TOKEN 作为校验来源。'
+      : '当前复用 openclaw.json 中 gateway.auth.token 作为校验来源。'
+    : '尚未检测到可用于远程访问的 token。'
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${title}</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top, rgba(221, 176, 107, 0.12), transparent 42%),
+          linear-gradient(180deg, #17120f 0%, #0d0b09 100%);
+        color: #f6ebdb;
+      }
+      .panel {
+        width: min(460px, calc(100vw - 32px));
+        padding: 28px;
+        border-radius: 22px;
+        background: rgba(34, 28, 24, 0.92);
+        border: 1px solid rgba(232, 198, 149, 0.18);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0 0 12px;
+        line-height: 1.6;
+        color: rgba(246, 235, 219, 0.84);
+      }
+      code {
+        font-family: "SFMono-Regular", "Consolas", monospace;
+        color: #ffd39b;
+      }
+      form {
+        margin-top: 20px;
+      }
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: rgba(246, 235, 219, 0.68);
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid rgba(232, 198, 149, 0.18);
+        border-radius: 14px;
+        background: rgba(23, 18, 15, 0.92);
+        color: #f6ebdb;
+        padding: 12px 14px;
+        font-size: 14px;
+      }
+      button {
+        margin-top: 12px;
+        width: 100%;
+        border: 0;
+        border-radius: 14px;
+        background: #ddb06b;
+        color: #24180d;
+        font-weight: 700;
+        padding: 12px 14px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .status {
+        min-height: 22px;
+        margin-top: 12px;
+        font-size: 13px;
+      }
+      .status[data-state="error"] {
+        color: #ff8f7c;
+      }
+      .status[data-state="success"] {
+        color: #9ae6b4;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <h1>${title}</h1>
+      <p>${message}</p>
+      <p>${sourceText}</p>
+      <p>你也可以直接用 <code>#token=...</code> 或 <code>?token=...</code> 打开当前地址，页面会自动建立访问会话。</p>
+      <form id="access-form"${options.tokenConfigured ? '' : ' hidden'}>
+        <label for="token">Access Token</label>
+        <input id="token" name="token" type="password" autocomplete="current-password" />
+        <button id="submit" type="submit">进入 ManClaw</button>
+        <p class="status" id="status" data-state="idle"></p>
+      </form>
+    </main>
+    <script>
+      const form = document.getElementById('access-form')
+      const input = document.getElementById('token')
+      const submit = document.getElementById('submit')
+      const status = document.getElementById('status')
+      const returnTo = ${JSON.stringify(options.requestPath)}
+      const storageKey = 'manclaw.access-token'
+
+      function setStatus(message, state) {
+        if (!status) return
+        status.textContent = message || ''
+        status.dataset.state = state || 'idle'
+      }
+
+      function readLocationToken() {
+        const searchParams = new URLSearchParams(window.location.search)
+        const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash
+        const hashParams = new URLSearchParams(hash)
+        return searchParams.get('token') || hashParams.get('token') || window.localStorage.getItem(storageKey) || ''
+      }
+
+      async function submitToken(token) {
+        if (!token) {
+          setStatus('请输入 token。', 'error')
+          return false
+        }
+
+        submit.disabled = true
+        setStatus('正在验证 token...', 'idle')
+
+        try {
+          const response = await fetch('/auth/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+            credentials: 'same-origin',
+          })
+          const payload = await response.json()
+          if (!response.ok || !payload.ok) {
+            throw new Error(payload.error?.message || 'Token verify failed.')
+          }
+
+          window.localStorage.setItem(storageKey, token)
+          setStatus('验证成功，正在进入控制台...', 'success')
+          window.location.replace(returnTo)
+          return true
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : 'Token verify failed.', 'error')
+          return false
+        } finally {
+          submit.disabled = false
+        }
+      }
+
+      if (form && input) {
+        const initialToken = readLocationToken()
+        if (initialToken) {
+          input.value = initialToken
+          void submitToken(initialToken)
+        }
+
+        form.addEventListener('submit', (event) => {
+          event.preventDefault()
+          void submitToken(input.value.trim())
+        })
+      }
+    </script>
+  </body>
+</html>`
+}
+
 app.addHook('onRequest', async (request) => {
   request.headers['x-manclaw-started-at'] = String(Date.now())
+})
+
+app.addHook('onRequest', async (request, reply) => {
+  const requestPath = request.url.split('?')[0]
+
+  if (request.method === 'OPTIONS' || ACCESS_AUTH_EXEMPT_PATHS.has(requestPath) || isLoopbackHostname(request.hostname)) {
+    return
+  }
+
+  const accessToken = await resolveAccessToken()
+  if (!accessToken.value) {
+    if (requestPath === '/health' || requestPath.startsWith('/api/')) {
+      return reply.code(503).send(fail('ACCESS_TOKEN_NOT_CONFIGURED', 'Remote access is disabled because no access token is configured.'))
+    }
+
+    return reply
+      .code(503)
+      .type('text/html; charset=utf-8')
+      .send(renderAccessGatePage({ requestPath: stripQueryToken(request.url), tokenConfigured: false, tokenSource: accessToken.source }))
+  }
+
+  const cookies = parseCookieHeader(request.headers.cookie)
+  const presentedToken =
+    extractBearerToken(request.headers.authorization) ??
+    (typeof request.headers['x-manclaw-token'] === 'string' ? request.headers['x-manclaw-token'].trim() : undefined) ??
+    cookies[ACCESS_TOKEN_COOKIE_NAME] ??
+    extractQueryToken(request.url)
+
+  if (isValidAccessToken(presentedToken, accessToken.value)) {
+    return
+  }
+
+  if (requestPath === '/health' || requestPath.startsWith('/api/')) {
+    return reply.code(401).send(fail('ACCESS_TOKEN_REQUIRED', 'A valid access token is required for non-local access.'))
+  }
+
+  return reply
+    .code(401)
+    .type('text/html; charset=utf-8')
+    .send(renderAccessGatePage({ requestPath: stripQueryToken(request.url), tokenConfigured: true, tokenSource: accessToken.source }))
 })
 
 app.addHook('onResponse', async (request, reply) => {
@@ -102,6 +463,32 @@ function fail(code: string, message: string): ApiResponse<never> {
     },
   }
 }
+
+app.post<{ Body: { token?: string } }>('/auth/session', async (request, reply) => {
+  const candidate = request.body?.token?.trim()
+  const accessToken = await resolveAccessToken()
+
+  if (!accessToken.value) {
+    return reply.code(503).send(fail('ACCESS_TOKEN_NOT_CONFIGURED', 'Remote access is disabled because no access token is configured.'))
+  }
+
+  if (!candidate) {
+    return reply.code(400).send(fail('INVALID_INPUT', 'Body.token must be a non-empty string.'))
+  }
+
+  if (!isValidAccessToken(candidate, accessToken.value)) {
+    return reply.code(401).send(fail('ACCESS_TOKEN_INVALID', 'The supplied access token is invalid.'))
+  }
+
+  const forwardedProto = typeof request.headers['x-forwarded-proto'] === 'string' ? request.headers['x-forwarded-proto'] : undefined
+  const isSecure = request.protocol === 'https' || forwardedProto?.split(',')[0]?.trim() === 'https'
+  reply.header('Set-Cookie', serializeAccessTokenCookie(candidate, isSecure))
+
+  return ok({
+    authenticated: true,
+    tokenSource: accessToken.source,
+  })
+})
 
 app.get('/health', async () => ({
   ok: true,
