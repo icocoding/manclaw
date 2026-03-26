@@ -60,11 +60,12 @@ const webDistCandidates = [
 ]
 const manager = createManager(process.cwd())
 await manager.initialize()
+const startupAccessToken = await manager.ensureAccessToken()
 
 let cachedAccessToken:
   | {
       value?: string
-      source: 'env' | 'openclaw' | 'none'
+      source: 'config' | 'none'
       cachedAt: number
     }
   | undefined
@@ -150,38 +151,24 @@ function isValidAccessToken(candidate: string | undefined, expected: string | un
   return candidateBuffer.length === expectedBuffer.length && timingSafeEqual(candidateBuffer, expectedBuffer)
 }
 
-async function resolveAccessToken(): Promise<{ value?: string; source: 'env' | 'openclaw' | 'none' }> {
+async function resolveAccessToken(): Promise<{ value?: string; source: 'config' | 'none' }> {
   const now = Date.now()
   if (cachedAccessToken && now - cachedAccessToken.cachedAt < ACCESS_TOKEN_CACHE_TTL_MS) {
     return cachedAccessToken
   }
 
-  const envToken = process.env.MANCLAW_ACCESS_TOKEN?.trim()
-  if (envToken) {
-    cachedAccessToken = {
-      value: envToken,
-      source: 'env',
-      cachedAt: now,
-    }
-    return cachedAccessToken
-  }
-
   try {
-    const currentConfig = await manager.getCurrentConfig()
-    const parsed = JSON.parse(currentConfig.content) as { gateway?: { auth?: { mode?: string; token?: string } } }
-    const authMode = parsed.gateway?.auth?.mode?.trim()
-    const authToken = parsed.gateway?.auth?.token?.trim()
-
-    if (authMode === 'token' && authToken) {
+    const configToken = await manager.getAccessToken()
+    if (configToken) {
       cachedAccessToken = {
-        value: authToken,
-        source: 'openclaw',
+        value: configToken,
+        source: 'config',
         cachedAt: now,
       }
       return cachedAccessToken
     }
   } catch (error) {
-    app.log.warn({ err: error }, 'failed to resolve access token from current openclaw config')
+    app.log.warn({ err: error }, 'failed to resolve access token from manclaw config')
   }
 
   cachedAccessToken = {
@@ -192,15 +179,13 @@ async function resolveAccessToken(): Promise<{ value?: string; source: 'env' | '
   return cachedAccessToken
 }
 
-function renderAccessGatePage(options: { requestPath: string; tokenConfigured: boolean; tokenSource: 'env' | 'openclaw' | 'none' }): string {
+function renderAccessGatePage(options: { requestPath: string; tokenConfigured: boolean; tokenSource: 'config' | 'none' }): string {
   const title = options.tokenConfigured ? 'ManClaw Access Token Required' : 'ManClaw Remote Access Disabled'
   const message = options.tokenConfigured
     ? '当前访问地址不是 127.0.0.1 / localhost，需要先输入 token 才能继续。'
-    : '当前访问地址不是 127.0.0.1 / localhost，但服务端还没有可用 token。请先配置 MANCLAW_ACCESS_TOKEN，或在 openclaw.json 中启用 gateway.auth.token。'
+    : '当前访问地址不是 127.0.0.1 / localhost，但服务端还没有可用 token。请先检查 `.manclaw/config.json` 中的 `ui.accessToken`。'
   const sourceText = options.tokenConfigured
-    ? options.tokenSource === 'env'
-      ? '当前使用 MANCLAW_ACCESS_TOKEN 作为校验来源。'
-      : '当前复用 openclaw.json 中 gateway.auth.token 作为校验来源。'
+    ? '当前使用 manclaw 配置文件中的 `ui.accessToken` 作为校验来源。'
     : '尚未检测到可用于远程访问的 token。'
 
   return `<!DOCTYPE html>
@@ -941,9 +926,30 @@ app.setErrorHandler((error, request, reply) => {
 const port = Number(process.env.PORT ?? 18300)
 const host = process.env.HOST ?? '127.0.0.1'
 
+function buildAccessTokenUsageLines(token: string, host: string, port: number): string[] {
+  const normalizedHost = host.trim() || '127.0.0.1'
+  const localHost = normalizedHost === '0.0.0.0' || normalizedHost === '::' ? '127.0.0.1' : normalizedHost
+  const localBrowserUrl = `http://${localHost}:${port}/#token=${encodeURIComponent(token)}`
+  const remoteBrowserUrl =
+    normalizedHost === '0.0.0.0' || normalizedHost === '::'
+      ? `http://<your-ip>:${port}/#token=${encodeURIComponent(token)}`
+      : localBrowserUrl
+
+  return [
+    `ManClaw access token: ${token}`,
+    `Browser(local): ${localBrowserUrl}`,
+    `Browser(remote): ${remoteBrowserUrl}`,
+    `API: curl -H "Authorization: Bearer ${token}" http://${localHost}:${port}/api/system/summary`,
+    'You can also use the x-manclaw-token header or ?token=... on first open.',
+  ]
+}
+
 try {
   await app.listen({ port, host })
   app.log.info({ app: APP_NAME, host, port }, 'server ready')
+  buildAccessTokenUsageLines(startupAccessToken, host, port).forEach((line) => {
+    app.log.info(line)
+  })
 } catch (error) {
   app.log.error(error)
   process.exit(1)

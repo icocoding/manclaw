@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcessByStdio } from 'node:child_process'
 import type { Readable } from 'node:stream'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import path from 'node:path'
@@ -84,6 +84,7 @@ const DEFAULT_CONFIG: ManClawConfig = {
     timeoutMs: 10_000,
   },
   ui: {
+    accessToken: '',
     restartNotice: null,
   },
 }
@@ -461,6 +462,10 @@ function createQuickModelRef(providerKey: string, model: string): string {
 
 function hasOwnKeys(value: Record<string, unknown>): boolean {
   return Object.keys(value).length > 0
+}
+
+function createAccessToken(): string {
+  return randomBytes(24).toString('base64url')
 }
 
 function createAgentSourceId(agentId: string, index: number): string {
@@ -1245,9 +1250,14 @@ function normalizeConfig(candidate: unknown): ManClawConfig {
     throw new Error('Config.shell.timeoutMs must be a positive number.')
   }
 
-  const ui = config.ui ?? { restartNotice: null }
+  const ui = config.ui ?? { accessToken: '', restartNotice: null }
   if (typeof ui !== 'object' || ui === null) {
     throw new Error('Config.ui must be an object.')
+  }
+
+  const accessToken = ui.accessToken
+  if (accessToken !== undefined && (typeof accessToken !== 'string' || !accessToken.trim())) {
+    throw new Error('Config.ui.accessToken must be a non-empty string when provided.')
   }
 
   const restartNotice = ui.restartNotice
@@ -1292,6 +1302,7 @@ function normalizeConfig(candidate: unknown): ManClawConfig {
       timeoutMs,
     },
     ui: {
+      accessToken: typeof accessToken === 'string' ? accessToken.trim() : '',
       restartNotice: restartNotice ?? null,
     },
   }
@@ -1338,6 +1349,7 @@ export class ManClawManager {
       await writeFile(this.paths.configPath, `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`, 'utf8')
     }
 
+    await this.ensureAccessToken()
     await this.appendRuntimeLog('info', 'manclaw manager initialized')
     await this.bootstrapFromGatewayStatus()
     await this.restoreManagedRuntimeState()
@@ -1656,16 +1668,52 @@ export class ManClawManager {
               : item,
           ),
         },
+        ui: {
+          restartNotice: config.ui?.restartNotice ?? null,
+        },
       },
     }
   }
 
   async saveManagerSettings(candidate: unknown): Promise<ManagerSettingsDocument> {
+    const currentConfig = await this.readConfigModel()
     const nextConfig = normalizeConfig(candidate)
+    nextConfig.ui = {
+      accessToken: nextConfig.ui?.accessToken?.trim() || currentConfig.ui?.accessToken?.trim() || '',
+      restartNotice: nextConfig.ui?.restartNotice ?? currentConfig.ui?.restartNotice ?? null,
+    }
     await writeFile(this.paths.configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8')
     await this.appendAuditLog(`manager.settings.save path=${this.paths.configPath}`)
     await this.appendRuntimeLog('info', `manager settings saved to ${this.paths.configPath}`)
     return this.getManagerSettings()
+  }
+
+  async ensureAccessToken(): Promise<string> {
+    const config = await this.readConfigModel()
+    const existingToken = config.ui?.accessToken?.trim()
+    if (existingToken) {
+      return existingToken
+    }
+
+    const nextToken = createAccessToken()
+    const nextConfig: ManClawConfig = {
+      ...config,
+      ui: {
+        accessToken: nextToken,
+        restartNotice: config.ui?.restartNotice ?? null,
+      },
+    }
+
+    await writeFile(this.paths.configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8')
+    await this.appendAuditLog(`manager.access-token.generated path=${this.paths.configPath}`)
+    await this.appendRuntimeLog('info', `manager access token generated at ${this.paths.configPath}`)
+    return nextToken
+  }
+
+  async getAccessToken(): Promise<string | undefined> {
+    const config = await this.readConfigModel()
+    const token = config.ui?.accessToken?.trim()
+    return token || undefined
   }
 
   async createProfile(candidate: CreateProfilePayload): Promise<ManagerSettingsDocument> {

@@ -93,21 +93,24 @@ VITE_API_PROXY_TARGET=http://127.0.0.1:18300
 
 当 `manclaw` 通过 `127.0.0.1` / `localhost` 之外的地址访问时，服务端会要求 token 验证。
 
-- token 优先读取环境变量 `MANCLAW_ACCESS_TOKEN`
-- 如果没有配置该环境变量，则回退复用当前 `openclaw.json` 中的 `gateway.auth.token`（要求 `gateway.auth.mode = token`）
+- 服务端启动时会自动生成一个访问 token，并写入 `./.manclaw/config.json -> ui.accessToken`
+- 启动日志会直接打印当前 token 和浏览器 / API 的使用方式
 - 浏览器可通过 `#token=...` 或 `?token=...` 直接打开页面，首次验证成功后服务端会建立访问会话
 - 直接请求 API 时，也可以通过 `Authorization: Bearer <token>` 或 `x-manclaw-token: <token>` 传递 token
 
 示例：
 
 ```bash
-MANCLAW_ACCESS_TOKEN=change-me HOST=0.0.0.0 pnpm preview
+HOST=0.0.0.0 pnpm preview
 ```
 
-然后可以使用：
+启动后日志会打印类似：
 
 ```txt
-http://<your-ip>:18300/#token=change-me
+ManClaw access token: <generated-token>
+Browser(local): http://127.0.0.1:18300/#token=<generated-token>
+Browser(remote): http://<your-ip>:18300/#token=<generated-token>
+API: curl -H "Authorization: Bearer <generated-token>" http://127.0.0.1:18300/api/system/summary
 ```
 
 ## 1.0 发布方式

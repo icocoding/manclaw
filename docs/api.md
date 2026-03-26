@@ -12,9 +12,8 @@
 
 当浏览器或客户端通过 `127.0.0.1` / `localhost` 之外的地址访问 `manclaw` 时，服务端会启用 token 校验。
 
-- token 来源优先级：
-  - `MANCLAW_ACCESS_TOKEN`
-  - 当前 `openclaw.json -> gateway.auth.token`（要求 `gateway.auth.mode = token`）
+- token 由 `manclaw` 在启动时自动生成，并写入 `./.manclaw/config.json -> ui.accessToken`
+- 启动日志会打印当前 token 和浏览器 / API 的使用方式
 - 放行方式：
   - `Authorization: Bearer <token>`
   - `x-manclaw-token: <token>`
@@ -41,17 +40,8 @@
   "ok": true,
   "data": {
     "authenticated": true,
-    "tokenSource": "env"
+    "tokenSource": "config"
   }
-}
-```
-
-成功示例：
-
-```json
-{
-  "ok": true,
-  "data": {}
 }
 ```
 

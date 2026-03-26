@@ -421,6 +421,7 @@ export interface ManClawConfig {
     timeoutMs: number
   }
   ui?: {
+    accessToken?: string
     restartNotice?: RestartNoticeDocument | null
   }
 }
